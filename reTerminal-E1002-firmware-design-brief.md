@@ -114,6 +114,12 @@ be compiled for two targets from **one** source, not reimplemented per-target
 | `panel-backend` | Wires `render`'s output to the real `gdep073e01`/`epdsi` driver over SPI | ESP32-S3 firmware only |
 | `web-preview` | Implements `DrawTarget` by writing into an in-memory pixel buffer, then blits to an HTML `<canvas>` via `wasm-bindgen`/`web-sys` | `wasm32-unknown-unknown` |
 | `firmware` | Binary crate: `esp-hal` init, deep-sleep/wake handling, `render` + `panel-backend`, WiFi fetch cycle (§10) | ESP32-S3 firmware only |
+| `server` | Native binary: holds the current `screen-spec`, serves it as JSON to the device, accepts updates, and serves the `web-preview` wasm bundle (§9, §10) | developer's machine (std) |
+
+`server` is the one crate that isn't `no_std`/hardware-constrained — it's a normal
+std binary meant to run on a laptop/always-on machine, and it's the piece that makes
+"preview" and "the thing the device actually fetches" the same data instead of two
+things that can drift apart.
 
 Because `render` and `screen-spec` never depend on hardware or `wasm-bindgen`, the
 exact same compiled logic (down to per-pixel color quantization) runs in the browser
@@ -158,26 +164,42 @@ Illustrative shape (exact schema to be finalized during implementation):
   later) without silently breaking older firmware or preview builds — see open
   questions in §13.
 
-## 9. Browser-Based Preview / Emulator
+## 9. `server`: Content Host + Browser Preview (Same Binary)
 
-A static web page (built via `wasm-pack` or `trunk`) that:
+One native (std) binary is both "the local server the device fetches from" and "the
+browser preview" — not two separately-run things. It holds the current
+`screen-spec` in memory (optionally persisted to disk) and exposes:
 
-1. Loads a `screen-spec` JSON document (pasted, loaded from a local file, or fetched
-   from the same local dev server the device polls — see §10).
-2. Runs it through the `render` crate compiled to `wasm32-unknown-unknown`.
-3. Draws the result to an HTML `<canvas>` via the `web-preview` backend (§7).
+| Route | Consumer | Purpose |
+|---|---|---|
+| `GET /screen` | Device firmware (`reqwless`) | Current `screen-spec` JSON — what gets rendered on the panel |
+| `PUT /screen` (or `POST`) | Any script/CLI/curl | Replace the current content — this is "send data to update screens/text" from the original ask |
+| `GET /` (or `/preview`) | Developer's browser | Serves the `web-preview` wasm bundle + a small HTML/JS harness |
 
-This requires no hardware to be connected and no panel flush to happen — it's meant
-to be the fast iteration loop for "what will this screen spec actually look like,"
-including correct 6-color quantization, before ever waking the real device.
+The preview page, once loaded, fetches from the *same* `GET /screen` route the
+device uses, runs it through the `render` crate compiled to
+`wasm32-unknown-unknown`, and draws it to an HTML `<canvas>` via the `web-preview`
+backend (§7) — so what you see in the browser is guaranteed to be what the device
+will fetch next, not a separate copy of the content.
+
+This requires no hardware to be connected and no panel flush to happen — it's the
+fast iteration loop for "what will this screen spec actually look like," including
+correct 6-color quantization, before ever waking the real device.
+
+**Suggested implementation:** `axum` (or similarly lightweight) for routing/JSON,
+serving the `web-preview` build output as static assets (e.g. via `tower-http`'s
+static file service, or baked into the binary with `rust-embed` for a
+single self-contained executable — no separate asset directory to keep in sync
+when you move it to a different machine).
 
 ## 10. Content Delivery: Local-Network Pull Model
 
 **Model:** the device is an HTTP **client**, never a server. On each wake, it:
 
 1. Joins the configured WiFi network (station mode).
-2. Issues a single plain-HTTP `GET` to a configured local server address (e.g. the
-   developer's laptop during development) for the current `screen-spec` JSON.
+2. Issues a single plain-HTTP `GET /screen` to a configured local server address
+   (the `server` crate from §9 — the developer's laptop during development) for the
+   current `screen-spec` JSON.
 3. Parses it, runs it through `render` + `panel-backend`, flushes to the panel.
 4. Tears down the WiFi connection and returns to deep sleep (§12).
 
@@ -202,10 +224,10 @@ including correct 6-color quantization, before ever waking the real device.
 GPIO/button press (on-demand manual refresh) — both trigger the same
 fetch → render → flush → sleep routine from §12.
 
-**Dev workflow:** any lightweight HTTP server on the developer's laptop serving the
-current `screen-spec` JSON at a fixed path (e.g. `GET /screen`) is sufficient — the
-implementation language of that server doesn't matter, since JSON is the contract.
-The device's target IP/port is supplied later (see open questions, §13).
+**Dev workflow:** run the `server` binary on the developer's laptop; `PUT /screen`
+new content via curl/script, watch it update live in the browser preview (§9), then
+either wait for the device's next poll or press its wake button to fetch it for
+real. The device's target IP/port is supplied later (see open questions, §14).
 
 ## 11. Refresh Model & Design Constraint
 
@@ -235,8 +257,8 @@ flush once"** model:
 2. **Hello world:** Single string rendered via `embedded-graphics` `MonoTextStyle`, flushed to panel.
 3. **Layout composition:** Multi-element screen (header + body text block + one icon) via `embedded-layout` + `embedded-text`.
 4. **Screen spec + shared `render` crate:** define the v1 JSON schema (§8), implement composition against a generic `DrawTarget`, validate against milestone 3's layout using a hand-authored spec file.
-5. **Browser preview:** `web-preview` wasm/canvas backend (§7, §9); confirm its output visually matches what milestone 3 produces on real hardware for the same spec.
-6. **WiFi fetch cycle:** `esp-radio` + `embassy-net` + `reqwless` GET against a local dev server, parse into `screen-spec`, render, flush — exercised against a laptop-hosted test server.
+5. **`server` + browser preview:** `server` crate (§9) with `GET`/`PUT /screen` and static hosting of the `web-preview` wasm/canvas bundle (§7); confirm the preview's output visually matches what milestone 3 produces on real hardware for the same spec.
+6. **WiFi fetch cycle:** `esp-radio` + `embassy-net` + `reqwless` GET against the `server` crate from milestone 5, parse into `screen-spec`, render, flush.
 7. **Power cycle:** Compose → flush → deep sleep → timer/button wake → fetch → repeat, with battery draw measured across a full cycle including the WiFi fetch window.
 8. **(Stretch)** Evaluate Slint or LVGL spike if declarative layout authoring becomes worth the added dependency weight.
 9. **(Stretch, post-v1)** Bitmap/icon regions in the screen spec, using `tinybmp`/`tinyqoi`.
@@ -250,3 +272,6 @@ flush once"** model:
 - [ ] Decide the schema evolution/versioning policy once bitmap regions are added post-v1 (reject unknown `version`? best-effort ignore unknown fields?).
 - [ ] Decide WiFi credential + local server IP/port provisioning mechanism for non-dev use (dev can hardcode/env-bake; production likely needs a USB-serial config tool or similar — no BLE-based provisioning, per §10).
 - [ ] Decide default poll interval and retry/backoff behavior when a fetch fails (e.g. keep last-rendered content and retry next wake vs. render an error state).
+- [ ] Decide whether `server` persists `screen-spec` to disk (survives a restart) or is purely in-memory for v1.
+- [ ] Decide whether `PUT /screen` needs any access control — likely unnecessary for a LAN-only dev server, but worth confirming before this ever runs on a shared network.
+- [ ] Decide how `web-preview`'s wasm/JS assets get into the `server` binary — build-time embed (`rust-embed`) vs. served from a directory on disk.
