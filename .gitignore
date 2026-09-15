@@ -1,1 +1,5 @@
 /target
+# Built by scripts/build-web-preview.sh; embedded into `server` at build time.
+/crates/server/assets/web_preview.wasm
+# Runtime state written by `server`.
+/screen.json
