@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "background": "white",
+  "regions": [
+    {
+      "rect": [0, 0, 800, 90],
+      "text": "Kitchen Display",
+      "style": "title",
+      "align": "center",
+      "valign": "middle",
+      "color": "white",
+      "background": "black"
+    },
+    {
+      "rect": [24, 110, 752, 60],
+      "text": "Thursday 18 September",
+      "style": "header",
+      "color": "blue"
+    },
+    {
+      "rect": [24, 180, 360, 250],
+      "text": "Bin day: Thursday\nRecycling: next week\n\nShopping:\n- milk\n- coffee beans\n- bread",
+      "style": "body",
+      "border": { "color": "green", "width": 3 }
+    },
+    {
+      "rect": [416, 180, 360, 250],
+      "text": "Next appointment\n14:00 dentist",
+      "style": "body",
+      "align": "center",
+      "valign": "middle",
+      "color": "red",
+      "background": "yellow"
+    },
+    {
+      "rect": [0, 450, 800, 30],
+      "text": "updated 07:15 via server",
+      "style": "small",
+      "align": "right",
+      "valign": "middle",
+      "color": "white",
+      "background": "blue"
+    }
+  ]
+}
