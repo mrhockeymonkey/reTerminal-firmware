@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/screen-spec",
+    "crates/render",
+    "crates/panel-backend",
+    "crates/web-preview",
+    "crates/server",
+    "crates/firmware",
+]
+
+# `panel-backend` and `firmware` only compile against the ESP32-S3 Xtensa
+# target (via the esp-rs toolchain fork, see crates/firmware/README.md).
+# They're excluded here so a plain `cargo check`/`clippy`/`test` (no
+# `--workspace` flag) only touches the crates that build on a normal host
+# toolchain. CI builds them explicitly in a separate job with the Xtensa
+# toolchain installed.
+default-members = [
+    "crates/screen-spec",
+    "crates/render",
+    "crates/web-preview",
+    "crates/server",
+]
+
+[workspace.package]
+edition = "2021"
