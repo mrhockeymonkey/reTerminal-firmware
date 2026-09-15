@@ -1,0 +1,13 @@
+# Applies when cargo runs from crates/firmware (cargo walks up from the
+# working directory, not from the package). Host builds from the workspace
+# root never see this file.
+
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --chip esp32s3"
+rustflags = ["-C", "link-arg=-nostartfiles"]
+
+[unstable]
+build-std = ["alloc", "core"]

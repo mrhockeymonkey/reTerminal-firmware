@@ -1,8 +1,51 @@
 [package]
 name = "firmware"
 version = "0.1.0"
-edition.workspace = true
+# The esp-rs ecosystem for esp-hal 1.1 targets edition 2024 / Rust 1.95; the
+# `esp` toolchain (rust-toolchain.toml) provides it.
+edition = "2024"
+rust-version = "1.95"
+license.workspace = true
+description = "ESP32-S3 firmware for the Seeed reTerminal E1002: fetch a screen spec over WiFi, render, flush the e-paper panel, deep sleep"
+
+[[bin]]
+name = "firmware"
+path = "src/main.rs"
+test = false
+bench = false
 
 [dependencies]
-render = { path = "../render" }
-panel-backend = { path = "../panel-backend" }
+render = { workspace = true }
+panel-backend = { workspace = true }
+screen-spec = { workspace = true }
+
+# Coherent esp-rs set for esp-hal 1.1 (esp-radio has no release against
+# esp-hal 1.2 yet). Versions mirror esp-generate's current template.
+esp-hal = { version = "~1.1.0", features = ["esp32s3", "unstable", "log-04"] }
+esp-rtos = { version = "0.3.0", features = ["esp32s3", "esp-radio", "esp-alloc", "embassy", "log-04"] }
+esp-radio = { version = "0.18.0", features = ["esp32s3", "wifi", "esp-alloc", "unstable", "log-04"] }
+esp-alloc = { version = "0.10.0", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3", "log-04"] }
+esp-println = { version = "0.17.0", features = ["esp32s3", "log-04"] }
+esp-backtrace = { version = "0.19.0", features = ["esp32s3", "panic-handler", "println"] }
+
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-time = { version = "0.5.0", features = ["log"] }
+embassy-net = { version = "0.9.1", features = ["tcp", "udp", "dhcpv4", "dns", "medium-ethernet", "log"] }
+smoltcp = { version = "0.13.0", default-features = false, features = [
+    "medium-ethernet", "multicast", "proto-dhcpv4", "proto-dns", "proto-ipv4",
+    "socket-dns", "socket-raw", "socket-tcp", "socket-udp", "socket-icmp", "log",
+] }
+reqwless = { version = "0.14.0", default-features = false, features = ["log"] }
+embedded-io-async = "0.7.0"
+
+embedded-hal = { workspace = true }
+embedded-hal-bus = "0.3.0"
+static_cell = "2.1.1"
+critical-section = "1.2.0"
+log = "0.4.27"
+heapless = { workspace = true }
+# esp-alloc's `ExternalMemory` (PSRAM) allocator implements this crate's
+# `Allocator` trait; it is how the 192 KB frame gets placed in PSRAM
+# without nightly's allocator_api.
+allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
