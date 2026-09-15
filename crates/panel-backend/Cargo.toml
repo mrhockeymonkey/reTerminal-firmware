@@ -2,6 +2,10 @@
 name = "panel-backend"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+description = "Drives the GDEP073E01 (ED2208) e-paper panel from a packed render frame, over embedded-hal SPI"
 
 [dependencies]
-render = { path = "../render" }
+render = { workspace = true }
+embedded-hal = { workspace = true }
+epdsi = { workspace = true }
