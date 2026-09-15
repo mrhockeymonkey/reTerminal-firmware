@@ -18,8 +18,12 @@ fi
 rustup target list --installed | grep -q '^wasm32-unknown-unknown$' \
   || rustup target add wasm32-unknown-unknown
 
+# The workspace release profile keeps debug info for the firmware's
+# backtraces; that is dead weight in a wasm module, so strip it here.
 # shellcheck disable=SC2086
-cargo build -p web-preview --target wasm32-unknown-unknown $profile_flag
+cargo build -p web-preview --target wasm32-unknown-unknown $profile_flag \
+  --config 'profile.release.debug=false' \
+  --config 'profile.release.strip=true'
 
 src="target/wasm32-unknown-unknown/$profile/web_preview.wasm"
 dst="crates/server/assets/web_preview.wasm"

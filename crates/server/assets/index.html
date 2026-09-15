@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>reTerminal preview</title>
+  <style>
+    :root {
+      --bg: #f4f2ec;
+      --fg: #1c1c1c;
+      --muted: #666;
+      --accent: #2855b4;
+      --err: #c4323a;
+      --panel-border: #333;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #1b1b1b; --fg: #eee; --muted: #aaa; --panel-border: #888; }
+    }
+    html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
+    main { max-width: 900px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p.sub { margin: 0 0 12px; color: var(--muted); }
+    #panel {
+      display: block; width: 100%; max-width: 800px; aspect-ratio: 800 / 480;
+      border: 6px solid var(--panel-border); border-radius: 4px; background: #f5f5f0;
+      image-rendering: pixelated;
+    }
+    #status { margin: 8px 0 16px; color: var(--muted); min-height: 1.4em; }
+    #status.err { color: var(--err); }
+    textarea {
+      width: 100%; box-sizing: border-box; min-height: 220px;
+      font: 13px/1.4 ui-monospace, monospace; color: var(--fg); background: transparent;
+      border: 1px solid var(--muted); border-radius: 4px; padding: 8px;
+    }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+    button { font: inherit; padding: 6px 14px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+    button.secondary { background: transparent; color: var(--accent); }
+    label { color: var(--muted); }
+    #put-result { color: var(--muted); }
+    #put-result.err { color: var(--err); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>reTerminal E1002 preview</h1>
+  <p class="sub">Renders <code>GET /screen</code> through the same <code>render</code> crate the device runs, with the panel's six-colour palette.</p>
+
+  <canvas id="panel" width="800" height="480" aria-label="Panel preview"></canvas>
+  <div id="status">Loading…</div>
+
+  <div class="row">
+    <button id="put" title="PUT the JSON below to /screen">Update screen</button>
+    <button id="reload" class="secondary" title="Reload the JSON from GET /screen">Reload from server</button>
+    <label><input type="checkbox" id="flash" checked> simulate panel flash</label>
+    <span id="put-result"></span>
+  </div>
+  <textarea id="json" spellcheck="false" aria-label="Screen spec JSON"></textarea>
+</main>
+<script src="preview.js"></script>
+</body>
+</html>
