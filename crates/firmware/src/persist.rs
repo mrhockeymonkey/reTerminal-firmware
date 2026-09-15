@@ -5,35 +5,36 @@
 //! deep-sleep config powers it down). They are zeroed on a power-on reset
 //! and preserved across timer/button wakes, panics and watchdog resets.
 //!
-//! Only atomics and plain integers may be placed here; the ESP32-S3 has no
-//! 64-bit atomics, so the hash is split in two.
+//! esp-hal's `Persistable` marker covers plain integers (on the esp nightly
+//! toolchain `AtomicU32` is the generic `Atomic<u32>`, which it does not
+//! cover), so these are `static mut`s reached through raw pointers with
+//! volatile accesses. They are only touched from the main task, never
+//! concurrently, which is what makes that sound.
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
-static LAST_HASH_LO: AtomicU32 = AtomicU32::new(0);
+static mut LAST_HASH: u64 = 0;
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
-static LAST_HASH_HI: AtomicU32 = AtomicU32::new(0);
-#[esp_hal::ram(unstable(rtc_fast, persistent))]
-static FAILURES: AtomicU32 = AtomicU32::new(0);
+static mut FAILURES: u32 = 0;
 
 /// FNV-1a hash of the last document successfully rendered to the panel
 /// (0 = none since power-on).
 pub fn last_hash() -> u64 {
-    (u64::from(LAST_HASH_HI.load(Ordering::Relaxed)) << 32)
-        | u64::from(LAST_HASH_LO.load(Ordering::Relaxed))
+    // SAFETY: single-threaded access from the main task; see module docs.
+    unsafe { core::ptr::read_volatile(&raw const LAST_HASH) }
 }
 
 pub fn set_last_hash(hash: u64) {
-    LAST_HASH_LO.store(hash as u32, Ordering::Relaxed);
-    LAST_HASH_HI.store((hash >> 32) as u32, Ordering::Relaxed);
+    // SAFETY: as above.
+    unsafe { core::ptr::write_volatile(&raw mut LAST_HASH, hash) }
 }
 
 /// Consecutive failed fetch/render cycles.
 pub fn failures() -> u32 {
-    FAILURES.load(Ordering::Relaxed)
+    // SAFETY: as above.
+    unsafe { core::ptr::read_volatile(&raw const FAILURES) }
 }
 
 pub fn set_failures(n: u32) {
-    FAILURES.store(n, Ordering::Relaxed);
+    // SAFETY: as above.
+    unsafe { core::ptr::write_volatile(&raw mut FAILURES, n) }
 }

@@ -309,7 +309,7 @@ fn dump_ppm() {
         let mut rgba = vec![0u8; FRAME_BYTES * 8];
         expand_rgba(f.as_bytes(), &mut rgba);
         let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();
-        for px in rgba.chunks_exact(4) {
+        for px in rgba.as_chunks::<4>().0 {
             ppm.extend_from_slice(&px[..3]);
         }
         let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.ppm"));
