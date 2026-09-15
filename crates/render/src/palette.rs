@@ -38,7 +38,8 @@ pub const fn rgb(c: Spectra6) -> [u8; 3] {
 /// untouched. Returns the number of bytes written.
 pub fn expand_rgba(src: &[u8], dst: &mut [u8]) -> usize {
     let mut written = 0;
-    for (byte, out) in src.iter().zip(dst.chunks_exact_mut(8)) {
+    let (pairs, _rest) = dst.as_chunks_mut::<8>();
+    for (byte, out) in src.iter().zip(pairs) {
         let hi = RGB_BY_CODE[usize::from(byte >> 4)];
         let lo = RGB_BY_CODE[usize::from(byte & 0x0f)];
         out[0..3].copy_from_slice(&hi);
