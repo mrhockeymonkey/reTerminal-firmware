@@ -71,7 +71,12 @@ Two existing Rust crates target this panel directly — evaluate both before wri
 1. **`gdep073e01`** — `embedded-graphics`-native driver exposing `Gdep073e01::new(spi, cs, dc, rst, busy, delay)`, `.init()`, `.clear()`, and standard drawing primitives out of the box.
 2. **`epdsi`** — more general `no_std` EPD framework; includes an explicit `ED2208` controller implementation and `GDEP073E01` panel spec, cross-referenced against GxEPD2 and the Zephyr board port. Supports GxEPD2-style paged/closure-based rendering with small stack buffers (useful to avoid a full 192KB framebuffer allocation).
 
-**Action item:** Verify current state of the 6-color (Spectra 6) vs 7-color (ACeP) handling in `gdep073e01`'s source/issues. `epdsi` explicitly documents the Spectra-6-vs-ACeP-7 distinction in its `ColorMode`/`SevenColor` types, so it may be the safer default if `gdep073e01` is ambiguous.
+**Decision (implemented):** `epdsi` 0.4. It models Spectra 6 explicitly, its
+`write_frame` accepts the pre-packed 4bpp frame that `render` produces anyway,
+and it polls BUSY active-low as the board's devicetree specifies. `gdep073e01`
+0.4 polls BUSY with the opposite polarity, forces a heap-allocated buffer and
+exposes an `Orange` variant. One `epdsi` bug is worked around in
+`panel-backend` (`clear_frame` sizes the 4bpp channel as 1bpp).
 
 Both implement `embedded-graphics`'s `DrawTarget` trait, so all rendering code above the driver layer is portable between them — and, per §7, portable to the browser preview too.
 
@@ -95,10 +100,11 @@ this specific panel's `DrawTarget` has not been confirmed — treat as a spike, 
 default. LVGL via `lvgl-rs` means bridging a C library rather than staying pure-Rust
 (Seeed's own stock firmware uses LVGL, for reference).
 
-**Recommendation:** start with `embedded-graphics` + `embedded-layout` +
-`embedded-text`. This covers dashboard-style layouts (headers, text blocks, icons,
-grids) without pulling in a full UI framework, and composes directly with either
-display driver crate above, and with the wasm preview backend in §7.
+**Decision (implemented):** `embedded-graphics` + `embedded-text` + `u8g2-fonts`
+(four presets: `logisoso42`, `helvB24`, `helvR18`, `helvR12`). Regions carry
+absolute rectangles, so `embedded-layout`/`embedded-canvas` are not needed in
+v1. `embedded-text`'s `Hidden` overdraw mode has a debug-mode overflow in
+0.7.3, so `Visible` is used with the region rectangle as the clip.
 
 ## 7. Software Architecture: Shared Crate, Multiple Targets
 
@@ -130,6 +136,12 @@ the panel.
 canvas-via-`wasm-bindgen` technique, but it's a generic, largely unmaintained
 simulator (circa 2019) with no awareness of a custom 6-color palette. `web-preview`
 should be a small (~100-200 line) purpose-built backend instead.
+
+**Decision (implemented):** `web-preview` uses no `wasm-bindgen`/`web-sys` at all —
+it exports nine plain `extern "C"` functions over static buffers and
+`crates/server/assets/preview.js` (~150 lines) copies the JSON in and the RGBA
+out. This removes the `wasm-bindgen-cli` toolchain and its exact-version
+lockstep; the module builds with `cargo build --target wasm32-unknown-unknown`.
 
 **Nice-to-have:** since the real panel's only refresh mode is a full-screen flash
 (§9), `web-preview` can optionally play a brief flash/flicker animation before
@@ -265,13 +277,15 @@ flush once"** model:
 
 ## 14. Open Questions for Implementation
 
-- [ ] Confirm `gdep073e01` crate's color handling matches Spectra 6, or standardize on `epdsi`.
-- [ ] Confirm pin mapping for the E1002 carrier board (SPI, DC, RST, BUSY) against the schematic PDF linked above.
-- [ ] Determine target font(s) and whether `u8g2-fonts` is needed or built-in `embedded-graphics` fonts suffice.
-- [ ] Finalize the v1 `screen-spec` JSON schema (region model, text styles, alignment options) beyond the illustrative example in §8.
-- [ ] Decide the schema evolution/versioning policy once bitmap regions are added post-v1 (reject unknown `version`? best-effort ignore unknown fields?).
-- [ ] Decide WiFi credential + local server IP/port provisioning mechanism for non-dev use (dev can hardcode/env-bake; production likely needs a USB-serial config tool or similar — no BLE-based provisioning, per §10).
-- [ ] Decide default poll interval and retry/backoff behavior when a fetch fails (e.g. keep last-rendered content and retry next wake vs. render an error state).
-- [ ] Decide whether `server` persists `screen-spec` to disk (survives a restart) or is purely in-memory for v1.
-- [ ] Decide whether `PUT /screen` needs any access control — likely unnecessary for a LAN-only dev server, but worth confirming before this ever runs on a shared network.
-- [ ] Decide how `web-preview`'s wasm/JS assets get into the `server` binary — build-time embed (`rust-embed`) vs. served from a directory on disk.
+Resolved during implementation (details and rationale in `docs/IMPLEMENTATION_PLAN.md`):
+
+- [x] Driver: standardized on `epdsi` (see §5).
+- [x] Pin mapping taken from Zephyr's mainline `reterminal_e1002_procpu.dts`: SPI2 SCLK/MOSI/MISO = GPIO7/9/8, EPD CS/DC/RST/BUSY = GPIO10/11/12/13 (BUSY active-low), Refresh/Left/Right buttons = GPIO3/4/5, LED = GPIO6, SD CS = GPIO14, 4 MHz SPI. Still worth a glance at the schematic on first bring-up.
+- [x] Fonts: `u8g2-fonts` (see §6); built-in fonts top out at 10×20 px.
+- [x] v1 schema: `version`, `background`, up to 16 `regions` with `rect`, `text`, `style` (title/header/body/small), `align`, `valign`, `color`, optional `background` and `border`; documented in `crates/screen-spec/src/lib.rs`.
+- [x] Versioning: `version` must be `1` (otherwise the device/preview show an "unsupported version" screen); unknown fields are ignored so the schema can grow.
+- [x] Provisioning: build-time env vars (`WIFI_SSID`, `WIFI_PASSWORD`, `SCREEN_URL`, `POLL_INTERVAL_SECS`) with placeholder defaults; a USB-serial config tool remains a later milestone.
+- [x] Poll/failure policy: 15 min timer + Refresh button; on failure keep the last image and retry after 2 min; after 3 consecutive failures show the error screen once. Unchanged content (same FNV-1a hash) skips the refresh entirely.
+- [x] `server` persists to `--state-file` (default `screen.json`), written atomically.
+- [x] No access control on `PUT /screen`; the server binds to `127.0.0.1` unless told otherwise.
+- [x] Assets are embedded with `rust-embed` (debug builds read them from disk; `--assets-dir` overrides at runtime); `scripts/build-web-preview.sh` produces the wasm.
