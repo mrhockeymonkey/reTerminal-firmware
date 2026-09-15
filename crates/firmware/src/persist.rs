@@ -10,11 +10,11 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-#[esp_hal::ram(rtc_fast, unstable(persistent))]
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
 static LAST_HASH_LO: AtomicU32 = AtomicU32::new(0);
-#[esp_hal::ram(rtc_fast, unstable(persistent))]
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
 static LAST_HASH_HI: AtomicU32 = AtomicU32::new(0);
-#[esp_hal::ram(rtc_fast, unstable(persistent))]
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
 static FAILURES: AtomicU32 = AtomicU32::new(0);
 
 /// FNV-1a hash of the last document successfully rendered to the panel

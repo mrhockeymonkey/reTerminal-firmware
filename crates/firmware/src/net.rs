@@ -8,7 +8,8 @@ use embassy_net::{Config as NetConfig, Runner, Stack, StackResources};
 use embassy_time::{Duration, with_timeout};
 use esp_hal::peripherals::WIFI;
 use esp_hal::rng::Rng;
-use esp_radio::wifi::{Config as WifiConfig, Interface, StationConfig, WifiController};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{Config as WifiConfig, Interface, WifiController};
 use log::{info, warn};
 use reqwless::client::HttpClient;
 use reqwless::request::Method;
@@ -100,7 +101,7 @@ pub async fn connect(spawner: &Spawner, wifi: WIFI<'static>) -> Result<Connectio
         seed,
     );
     let stack = STACK.init(stack);
-    spawner.spawn(net_task(runner)).expect("net task");
+    spawner.spawn(net_task(runner).expect("net task pool exhausted"));
 
     match with_timeout(DHCP_TIMEOUT, stack.wait_config_up()).await {
         Ok(()) => {
@@ -135,6 +136,9 @@ async fn fetch_inner(stack: &Stack<'static>, buf: &mut [u8]) -> Result<usize, Ne
     let mut client = HttpClient::new(&tcp, &dns);
 
     info!("http: GET {}", config::SCREEN_URL);
+    // Recorded up front: `send` borrows `buf` mutably until the body is
+    // dropped, so the offset must not touch `buf` while the body is alive.
+    let buf_start = buf.as_ptr() as usize;
     let mut request = client
         .request(Method::GET, config::SCREEN_URL)
         .await
@@ -162,7 +166,7 @@ async fn fetch_inner(stack: &Stack<'static>, buf: &mut [u8]) -> Result<usize, Ne
                 _ => NetError::Http,
             }
         })?;
-        let start = body.as_ptr() as usize - buf.as_ptr() as usize;
+        let start = body.as_ptr() as usize - buf_start;
         (start, body.len())
     };
     buf.copy_within(start..start + len, 0);
