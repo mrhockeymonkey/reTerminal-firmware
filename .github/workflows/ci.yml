@@ -2,31 +2,41 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   host-checks:
-    name: Host checks (screen-spec, render, server, web-preview)
+    name: Host checks (screen-spec, render, panel-backend, server, web-preview)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
       - name: cargo fmt --check
         run: cargo fmt --all --check
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: cargo test
         run: cargo test
+      - name: Build web-preview for wasm32
+        run: scripts/build-web-preview.sh
+      - name: Build server with the wasm bundle embedded
+        run: cargo build -p server --release
 
   firmware:
     name: Firmware (ESP32-S3 / Xtensa)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/firmware
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust for Xtensa
@@ -36,5 +46,11 @@ jobs:
           buildtargets: esp32s3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: cargo check (firmware, panel-backend)
-        run: cargo check -p firmware -p panel-backend --target xtensa-esp32s3-none-elf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/firmware -> ../../target"
+      # A real link (not just `cargo check`) so linker-script and memory-layout
+      # problems surface here rather than on the user's machine. The crate's
+      # own .cargo/config.toml selects the xtensa target and build-std.
+      - name: cargo build --release (firmware)
+        run: cargo build --release

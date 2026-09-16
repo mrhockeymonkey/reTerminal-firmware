@@ -2,6 +2,14 @@
 name = "render"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+description = "Composes a screen-spec into a 4bpp Spectra 6 frame via embedded-graphics; shared by the firmware and the browser preview"
 
 [dependencies]
-screen-spec = { path = "../screen-spec" }
+screen-spec = { workspace = true }
+embedded-graphics = { workspace = true }
+embedded-text = { workspace = true }
+u8g2-fonts = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

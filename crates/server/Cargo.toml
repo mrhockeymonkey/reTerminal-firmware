@@ -2,6 +2,19 @@
 name = "server"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+description = "LAN content server for the reTerminal E1002: serves the current screen spec to the device and hosts the browser preview"
 
 [dependencies]
-screen-spec = { path = "../screen-spec" }
+screen-spec = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+rust-embed = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true }
+http-body-util = { workspace = true }

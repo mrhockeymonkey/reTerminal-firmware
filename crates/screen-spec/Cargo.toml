@@ -2,3 +2,13 @@
 name = "screen-spec"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+description = "Shared JSON screen-content contract for the reTerminal E1002 firmware, server and browser preview"
+
+[dependencies]
+serde = { workspace = true }
+heapless = { workspace = true }
+serde-json-core = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

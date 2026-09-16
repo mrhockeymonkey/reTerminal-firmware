@@ -9,18 +9,67 @@ members = [
     "crates/firmware",
 ]
 
-# `panel-backend` and `firmware` only compile against the ESP32-S3 Xtensa
-# target (via the esp-rs toolchain fork, see crates/firmware/README.md).
-# They're excluded here so a plain `cargo check`/`clippy`/`test` (no
-# `--workspace` flag) only touches the crates that build on a normal host
-# toolchain. CI builds them explicitly in a separate job with the Xtensa
-# toolchain installed.
+# `firmware` only compiles against the ESP32-S3 Xtensa target (via the esp-rs
+# toolchain fork, see crates/firmware/README.md). It's excluded here so a plain
+# `cargo check`/`clippy`/`test` (no `--workspace` flag) only touches the crates
+# that build on a normal host toolchain. CI builds it explicitly in a separate
+# job with the Xtensa toolchain installed.
+#
+# `panel-backend` is written purely against `embedded-hal` traits, so it builds
+# and tests on the host even though it only ever runs on the device.
 default-members = [
     "crates/screen-spec",
     "crates/render",
+    "crates/panel-backend",
     "crates/web-preview",
     "crates/server",
 ]
 
 [workspace.package]
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/mrhockeymonkey/reTerminal-firmware"
+
+[workspace.dependencies]
+# Workspace crates
+screen-spec = { path = "crates/screen-spec" }
+render = { path = "crates/render" }
+panel-backend = { path = "crates/panel-backend" }
+
+# Shared no_std building blocks
+serde = { version = "1", default-features = false, features = ["derive"] }
+heapless = { version = "0.9", features = ["serde"] }
+serde-json-core = "0.6"
+embedded-graphics = "0.8.1"
+embedded-text = "0.7"
+u8g2-fonts = { version = "0.8", features = ["embedded_graphics_textstyle"] }
+embedded-hal = "1.0"
+epdsi = "0.4"
+
+# Host-only
+serde_json = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace"] }
+http-body-util = "0.1"
+rust-embed = "8"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+embedded-hal-mock = { version = "0.11", default-features = false, features = ["eh1"] }
+
+# esp-radio's WiFi blob is unusable at opt-level 0; the crate's docs require
+# this override for debug builds of the firmware.
+[profile.dev.package.esp-radio]
+opt-level = 3
+
+# Release settings chosen for the firmware (esp-hal's PSRAM support requires an
+# optimised build; `debug = 2` keeps symbols for esp-backtrace without affecting
+# the flashed image). They also apply to the host crates, where they are merely
+# conservative.
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"

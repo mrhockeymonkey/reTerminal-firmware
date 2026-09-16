@@ -1,0 +1,5 @@
+# The Xtensa target needs the esp-rs fork of rustc/LLVM, installed as the
+# `esp` toolchain by `espup install`. Only picked up when cargo is run from
+# inside this directory, so the rest of the workspace keeps using stable.
+[toolchain]
+channel = "esp"
