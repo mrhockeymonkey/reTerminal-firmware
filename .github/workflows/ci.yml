@@ -31,6 +31,40 @@ jobs:
       - name: Build server with the wasm bundle embedded
         run: cargo build -p server --release
 
+  # Server binary for a Raspberry Pi on 64-bit Raspberry Pi OS (see
+  # deploy/README.md). A static musl build, so it doesn't depend on the Pi's
+  # glibc being as new as the runner's; linked with the toolchain's bundled
+  # rust-lld, so no cross gcc.
+  server-pi:
+    name: Server for Raspberry Pi (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-unknown-linux-musl
+      # The release server embeds the preview's wasm module, so build it first.
+      - name: Build web-preview for wasm32
+        run: scripts/build-web-preview.sh
+      - name: cargo build --release (server)
+        run: >
+          cargo build -p server --release --target aarch64-unknown-linux-musl
+          --config 'target.aarch64-unknown-linux-musl.linker="rust-lld"'
+          --config 'profile.release.debug=false'
+          --config 'profile.release.strip=true'
+      - name: Package binary and unit file
+        run: |
+          mkdir -p dist
+          cp target/aarch64-unknown-linux-musl/release/server dist/reterminal-server
+          cp deploy/reterminal-server.service deploy/README.md dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-aarch64
+          path: dist/
+
   firmware:
     name: Firmware (ESP32-S3 / Xtensa)
     runs-on: ubuntu-latest

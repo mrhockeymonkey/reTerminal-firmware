@@ -1,0 +1,42 @@
+# systemd unit for the reTerminal E1002 content server. See deploy/README.md.
+#
+# Install to /etc/systemd/system/reterminal-server.service, with the binary at
+# /usr/local/bin/reterminal-server.
+
+[Unit]
+Description=reTerminal E1002 content server
+Documentation=https://github.com/mrhockeymonkey/reTerminal-firmware/blob/main/deploy/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Listen on all interfaces so the device can reach it over WiFi. The template
+# and values persist under /var/lib/reterminal-server (StateDirectory below).
+ExecStart=/usr/local/bin/reterminal-server --bind 0.0.0.0:8080 --state-file /var/lib/reterminal-server/screen.json
+Environment=RUST_LOG=info,tower_http=info
+# The server shuts down gracefully on Ctrl-C (SIGINT); stop it the same way.
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=5
+
+# Run as a throwaway unprivileged user; systemd creates and owns the state dir.
+DynamicUser=yes
+StateDirectory=reterminal-server
+WorkingDirectory=/var/lib/reterminal-server
+
+# Hardening: the server only needs the network and its state directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

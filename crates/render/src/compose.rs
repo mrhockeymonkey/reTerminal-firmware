@@ -11,6 +11,9 @@ use screen_spec::{Colour, HAlign, Region, ScreenSpec, TextStyle, VAlign};
 use crate::fonts::{self, PADDING};
 use crate::Spectra6;
 
+/// Where the status bar goes when the spec does not mark one.
+const DEFAULT_STATUS_RECT: [i32; 4] = [0, crate::HEIGHT as i32 - 30, crate::WIDTH as i32, 30];
+
 /// Draws `spec` onto `target`: clears to the background colour, then draws
 /// each region in order (fill, border, text), each clipped to its rectangle.
 ///
@@ -20,11 +23,59 @@ pub fn render<D>(spec: &ScreenSpec, target: &mut D) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Spectra6>,
 {
+    render_with_alert(spec, None, target)
+}
+
+/// Like [`render`], but with `alert` set the status bar (the first region
+/// marked `"status": true`) is drawn red with `alert` as white,
+/// right-aligned text in place of whatever the spec put there. A spec with
+/// no marked region gets a bar across the bottom of the screen instead.
+///
+/// This is how the device reports what only it knows (battery low, no
+/// usable screen from the server) without a separate error screen.
+pub fn render_with_alert<D>(
+    spec: &ScreenSpec,
+    alert: Option<&str>,
+    target: &mut D,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Spectra6>,
+{
     target.clear(spec.background.into())?;
+    let mut alerted = false;
     for region in &spec.regions {
-        draw_region(region, target)?;
+        match alert {
+            Some(msg) if region.status && !alerted => {
+                draw_region(&alert_region(region.clone(), msg), target)?;
+                alerted = true;
+            }
+            _ => draw_region(region, target)?,
+        }
+    }
+    if let Some(msg) = alert {
+        if !alerted {
+            let mut bar = Region::new(DEFAULT_STATUS_RECT);
+            bar.style = TextStyle::Small;
+            draw_region(&alert_region(bar, msg), target)?;
+        }
     }
     Ok(())
+}
+
+/// `region` restyled as the red alert bar showing `msg` (truncated to fit).
+fn alert_region(mut region: Region, msg: &str) -> Region {
+    region.background = Some(Colour::Red);
+    region.color = Colour::White;
+    region.align = HAlign::Right;
+    region.valign = VAlign::Middle;
+    region.border = None;
+    region.text.clear();
+    for ch in msg.chars() {
+        if region.text.push(ch).is_err() {
+            break; // truncated to MAX_TEXT
+        }
+    }
+    region
 }
 
 fn draw_region<D>(region: &Region, target: &mut D) -> Result<(), D::Error>
@@ -103,59 +154,4 @@ fn shrink(rect: Rectangle, by: u32) -> Rectangle {
         rect.top_left + Point::new(by as i32, by as i32),
         Size::new(rect.size.width - by2, rect.size.height - by2),
     )
-}
-
-/// What went wrong, for [`render_error`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ErrorKind {
-    /// The document could not be parsed.
-    InvalidSpec,
-    /// The document's `version` is not supported by this build.
-    UnsupportedVersion,
-    /// The device could not reach the server or the request failed.
-    FetchFailed,
-}
-
-impl ErrorKind {
-    fn title(self) -> &'static str {
-        match self {
-            ErrorKind::InvalidSpec => "Invalid screen spec",
-            ErrorKind::UnsupportedVersion => "Unsupported spec version",
-            ErrorKind::FetchFailed => "Could not fetch screen",
-        }
-    }
-}
-
-/// Draws a full-screen error notice, so the device and the preview show the
-/// same thing when a document is unusable. `detail` is truncated to fit.
-pub fn render_error<D>(kind: ErrorKind, detail: &str, target: &mut D) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = Spectra6>,
-{
-    let mut spec = ScreenSpec::empty();
-
-    let mut banner = Region::new([0, 0, crate::WIDTH as i32, 96]);
-    let _ = banner.text.push_str(kind.title());
-    banner.style = TextStyle::Header;
-    banner.align = HAlign::Center;
-    banner.valign = VAlign::Middle;
-    banner.color = Colour::White;
-    banner.background = Some(Colour::Red);
-
-    let mut body = Region::new([
-        24,
-        120,
-        crate::WIDTH as i32 - 48,
-        crate::HEIGHT as i32 - 144,
-    ]);
-    for ch in detail.chars() {
-        if body.text.push(ch).is_err() {
-            break; // truncated to MAX_TEXT
-        }
-    }
-    body.style = TextStyle::Body;
-
-    let _ = spec.regions.push(banner);
-    let _ = spec.regions.push(body);
-    render(&spec, target)
 }

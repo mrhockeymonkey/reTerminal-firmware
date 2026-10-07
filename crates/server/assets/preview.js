@@ -4,13 +4,18 @@
 // buffers: we copy the JSON from GET /screen into `wp_spec_buf_ptr()`, call
 // `wp_render(len)`, then read `wp_width()*wp_height()*4` RGBA bytes from
 // `wp_rgba_ptr()` straight into an ImageData. No wasm-bindgen involved.
+//
+// Shared by both pages: the values page (index.html, plus values.js) and the
+// layout editor (layout.html). The editor's elements are absent on the values
+// page, so everything touching them is guarded. The canvas always shows
+// GET /screen (template filled with values); the editor edits GET /template.
 
 'use strict';
 
 const canvas = document.getElementById('panel');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
-const jsonEl = document.getElementById('json');
+const jsonEl = document.getElementById('json'); // layout page only
 const putResult = document.getElementById('put-result');
 const flashEl = document.getElementById('flash');
 
@@ -35,7 +40,7 @@ function decodeError() {
 
 // Draw the frame; optionally play the black/white flash a real refresh shows.
 async function present(imageData) {
-  if (flashEl.checked) {
+  if (flashEl && flashEl.checked) {
     const frames = ['#000', '#f5f5f0', '#000', '#f5f5f0'];
     for (const fill of frames) {
       ctx.fillStyle = fill;
@@ -85,11 +90,22 @@ async function refresh(force) {
     lastEtag = res.headers.get('ETag');
     const text = await res.text();
     if (text === lastRenderedText && !force) return;
-    if (document.activeElement !== jsonEl) jsonEl.value = text;
     await renderText(text, 'server');
+    if (jsonEl && document.activeElement !== jsonEl) await loadTemplate();
   } catch (e) {
     setStatus(`GET /screen failed: ${e}`, true);
   }
+}
+
+// The editor shows the template, not the filled-in screen: PUTting the latter
+// back would bake the current values in and lose the placeholders.
+async function loadTemplate() {
+  const res = await fetch('/template', { cache: 'no-store' });
+  if (!res.ok) {
+    setStatus(`GET /template failed: ${res.status}`, true);
+    return;
+  }
+  jsonEl.value = await res.text();
 }
 
 async function putScreen() {
@@ -130,19 +146,22 @@ async function main() {
     setStatus(`could not load web_preview.wasm (run scripts/build-web-preview.sh): ${e}`, true);
     return;
   }
-  document.getElementById('put').addEventListener('click', putScreen);
-  document.getElementById('reload').addEventListener('click', () => {
-    lastEtag = null;
-    lastRenderedText = null;
-    refresh(true);
-  });
-  // Live-preview edits without touching the server: render on Ctrl/Cmd+Enter.
-  jsonEl.addEventListener('keydown', (ev) => {
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
-      ev.preventDefault();
-      renderText(jsonEl.value, 'local (unsent)');
-    }
-  });
+  if (jsonEl) {
+    document.getElementById('put').addEventListener('click', putScreen);
+    document.getElementById('reload').addEventListener('click', () => {
+      lastEtag = null;
+      lastRenderedText = null;
+      refresh(true);
+    });
+    // Live-preview edits without touching the server: render on Ctrl/Cmd+Enter.
+    // Placeholders show unfilled, since values are only applied server-side.
+    jsonEl.addEventListener('keydown', (ev) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') {
+        ev.preventDefault();
+        renderText(jsonEl.value, 'local (unsent, placeholders unfilled)');
+      }
+    });
+  }
   await refresh(true);
   setInterval(() => refresh(false), POLL_MS);
 }

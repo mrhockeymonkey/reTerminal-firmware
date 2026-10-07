@@ -38,9 +38,21 @@ pub const POLL_INTERVAL_SECS: u64 = match option_env!("POLL_INTERVAL_SECS") {
 /// Seconds between wake-ups while fetches are failing.
 pub const RETRY_INTERVAL_SECS: u64 = 120;
 
-/// After this many consecutive failed cycles the panel shows an error
-/// screen once (until then the last good image stays up).
-pub const FAILURES_BEFORE_ERROR_SCREEN: u32 = 3;
+/// After this many consecutive failed cycles the status bar turns red with
+/// the error (until then the last good image stays up unchanged).
+pub const FAILURES_BEFORE_ERROR_BAR: u32 = 3;
+
+/// Below this charge the status bar shows "battery low".
+pub const BATTERY_LOW_PERCENT: u8 = 10;
+
+/// The warning clears only once the charge is back above this, so a reading
+/// hovering around 10% does not flip the bar (and cost a refresh) each wake.
+pub const BATTERY_OK_PERCENT: u8 = 15;
+
+/// Ratio of the resistor divider between the battery and GPIO1: battery
+/// mV = pin mV × this. Assumed 2 (equal resistors); check the logged
+/// `battery:` voltage against a multimeter on real hardware.
+pub const BATTERY_DIVIDER: u32 = 2;
 
 /// Whether the build carries the placeholder credentials.
 pub const fn is_placeholder_config() -> bool {

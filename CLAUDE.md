@@ -25,7 +25,8 @@ is excluded (see "The Xtensa/firmware constraint" below).
 - `cargo test -p <crate>` — test a single crate (`screen-spec`, `render`, `panel-backend`, `server`, or `web-preview`)
 - `cargo clippy -p <crate> -- -D warnings` — lint a single crate
 - `scripts/build-web-preview.sh` — wasm32 release build of `web-preview`, copied to `crates/server/assets/web_preview.wasm` (git-ignored; `server` embeds it in release builds)
-- `cargo run -p server -- --bind 127.0.0.1:8080` — content server + preview page; `curl -X PUT --data-binary @crates/screen-spec/samples/kitchen.json localhost:8080/screen`
+- `cargo run -p server -- --bind 127.0.0.1:8080` — content server + preview page; `curl -X PUT --data-binary @crates/screen-spec/samples/meals.json localhost:8080/screen`
+- Raspberry Pi server binaries (static musl, aarch64) come from CI's `server-pi` job as artifacts; install as a systemd service per `deploy/README.md`
 - `cargo test -p render -- --ignored dump_ppm` — writes the sample renders as PPM under `target/tmp/` for eyeballing
 - `cargo tree -p firmware --target xtensa-esp32s3-none-elf` — resolves the firmware's dependency graph on the host (works here; building does not)
 

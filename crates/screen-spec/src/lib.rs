@@ -16,7 +16,8 @@
 //!     { "rect": [0, 0, 800, 80], "text": "Kitchen Display", "style": "title",
 //!       "align": "center", "valign": "middle", "color": "black", "background": "yellow" },
 //!     { "rect": [20, 100, 760, 360], "text": "Bin day: Thursday\nNext: 14:00", "style": "body" },
-//!     { "rect": [0, 470, 800, 10], "background": "blue" }
+//!     { "rect": [0, 450, 800, 30], "text": "updated 07:15", "style": "small",
+//!       "align": "right", "color": "white", "background": "blue", "status": true }
 //!   ]
 //! }
 //! ```
@@ -28,6 +29,11 @@
 //!   bitmap region post-v1) without breaking older consumers.
 //! * Regions are drawn in order: background fill, border, then text, each
 //!   clipped to its `rect`. Later regions paint over earlier ones.
+//! * `"status": true` marks the device's status bar. When the device has
+//!   something to report (battery low, no usable screen from the server) it
+//!   redraws that region red with a white, right-aligned message; otherwise
+//!   the region is drawn exactly as sent. Only the first marked region is
+//!   used.
 //! * Sizes are bounded ([`MAX_REGIONS`], [`MAX_TEXT`], [`MAX_JSON_BYTES`]) so
 //!   the device can hold a whole document in fixed buffers.
 #![no_std]
@@ -187,6 +193,9 @@ pub struct Region {
     /// Optional border.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<Border>,
+    /// Marks the status bar the device may override (see the module docs).
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub status: bool,
 }
 
 impl Region {
@@ -201,6 +210,7 @@ impl Region {
             color: Colour::Black,
             background: None,
             border: None,
+            status: false,
         }
     }
 

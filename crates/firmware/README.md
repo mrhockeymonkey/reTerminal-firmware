@@ -21,6 +21,11 @@ WIFI_SSID=home WIFI_PASSWORD=secret SCREEN_URL=http://192.168.1.20:8080/screen \
 
 Always build `--release`: esp-hal's PSRAM support requires an optimised build.
 
+The runner flashes `partitions.csv`, which adds a 32 KB `screen` data
+partition holding the last good document (`src/store.rs`). A device flashed
+without it still works, but a failed fetch then shows a blank screen with
+the red status bar instead of the last good content.
+
 Configuration is baked in at build time (see `src/config.rs`):
 
 | Variable | Default | Meaning |
@@ -36,18 +41,27 @@ download hosts are blocked there); it is excluded from the workspace's
 
 ## What a wake cycle does
 
-1. `esp_hal::init`, heaps (internal + 8 MB octal PSRAM), `esp_rtos::start`.
+1. `esp_hal::init`, heaps (internal + 8 MB octal PSRAM), battery reading
+   (before the radio loads it), `esp_rtos::start`.
 2. WiFi station connect (15 s timeout) → DHCP (10 s) → `GET /screen` (10 s)
    into a 16 KiB buffer → radio off.
-3. FNV-1a hash of the body compared with the last flushed document (kept in
-   RTC memory): unchanged ⇒ skip straight to sleep, no panel flash.
-4. Parse (`screen-spec`) → `render` into the PSRAM frame → `panel-backend`
+3. FNV-1a hash of the body and the status-bar state compared with what is
+   on the panel (kept in RTC memory): both unchanged ⇒ skip straight to
+   sleep, no panel flash.
+4. Parse (`screen-spec`) → save the body to the `screen` flash partition
+   (only if it changed) → `render` into the PSRAM frame → `panel-backend`
    streams 192,000 bytes and refreshes (~20 s) → panel to sleep.
-5. Failure policy: keep the last image, retry in 2 min; after 3 consecutive
-   failures show the shared error screen once, then back to the normal
-   interval.
+5. Status bar: the region marked `"status": true` (or a 30 px bar at the
+   bottom if none is) is drawn as sent normally, and red with white,
+   right-aligned text when the device has something to say:
+   - **battery low** below 10% (cleared again above 15%);
+   - **the failure** ("no WiFi connection", "could not reach server", …)
+     after 3 consecutive failed cycles; this wins over battery low.
+   Until the third failure the last image stays up and the device retries
+   every 2 min. The error bar repaints the last good document from flash;
+   the next good fetch turns the bar back to normal.
 6. Deep sleep with timer + Refresh-button wake; RTC fast memory stays on so
-   the hash/failure counter survive.
+   the hash, bar state, battery latch and failure counter survive.
 
 ## Pins (from Zephyr's `reterminal_e1002_procpu.dts`)
 
@@ -58,17 +72,37 @@ download hosts are blocked there); it is excluded from the workspace's
 | Refresh / Left / Right buttons | 3 / 4 / 5 (active-low) |
 | Green LED | 6 (active-low, on while awake) |
 | SD card CS | 14 (held high) |
+| Battery sense / divider enable | 1 (ADC1 ch0) / 21 (high while measuring) |
 
 ## Hardware validation checklist
 
 1. Back up the stock firmware first:
-   `esptool -c esp32s3 -p /dev/ttyUSB0 read-flash 0x0 0x2000000 fw-backup-32MB.bin`.
+   `esptool -c esp32s3 -p /dev/ttyUSB0 -b 921600 read-flash 0x0 0x2000000 fw-backup-32MB.bin`.
 2. Run `server` on the laptop (`cargo run -p server -- --bind 0.0.0.0:8080`),
    flash with `SCREEN_URL` pointing at it, and watch the monitor for: PSRAM
    init, `wifi: connected`, `dhcp: <ip>`, `http: N byte body`, `panel: refresh`,
    `deep sleep for 900 s`.
 3. Compare the panel with the browser preview at `http://<laptop>:8080/`.
 4. Press Refresh during sleep: the log should show wake cause `Ext0`.
-5. Stop the server: after the third failed cycle the red error screen
-   appears; start it again and normal content returns.
-6. Measure sleep current and awake time to tune `POLL_INTERVAL_SECS`.
+5. Stop the server: after the third failed cycle the status bar turns red
+   with the error over the last good content; start it again and the bar
+   returns to normal.
+6. Compare the logged `battery: N mV` with a multimeter across the cell and
+   adjust `BATTERY_DIVIDER` in `src/config.rs` if they disagree. Also check
+   what it reads on USB power with no battery fitted.
+7. Measure sleep current and awake time to tune `POLL_INTERVAL_SECS`.
+
+
+## Issues
+
+```bash
+espflash board-info
+[2026-10-06T19:52:21Z INFO ] Serial port: '/dev/ttyUSB0'
+[2026-10-06T19:52:21Z INFO ] Connecting...
+Error:   × Failed to open serial port /dev/ttyUSB0
+  ├─▶ Error while connecting to device
+  ╰─▶ Permission denied
+
+sudo usermod -aG dialout $USER
+# reboot or logoff/on
+```

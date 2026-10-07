@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reTerminal preview</title>
+  <title>reTerminal values</title>
   <style>
     :root {
       --bg: #f4f2ec;
@@ -19,7 +19,9 @@
     html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
     main { max-width: 900px; margin: 0 auto; padding: 16px; }
     h1 { font-size: 18px; margin: 0 0 4px; }
+    h2 { font-size: 15px; margin: 0 0 8px; }
     p.sub { margin: 0 0 12px; color: var(--muted); }
+    a { color: var(--accent); }
     #panel {
       display: block; width: 100%; max-width: 800px; aspect-ratio: 800 / 480;
       border: 6px solid var(--panel-border); border-radius: 4px; background: #f5f5f0;
@@ -27,35 +29,50 @@
     }
     #status { margin: 8px 0 16px; color: var(--muted); min-height: 1.4em; }
     #status.err { color: var(--err); }
-    textarea {
-      width: 100%; box-sizing: border-box; min-height: 220px;
-      font: 13px/1.4 ui-monospace, monospace; color: var(--fg); background: transparent;
-      border: 1px solid var(--muted); border-radius: 4px; padding: 8px;
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 12px 0; }
+    @media (max-width: 600px) { .cols { grid-template-columns: 1fr; } }
+    .field { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+    .field span { color: var(--muted); font-size: 13px; }
+    input[type=text] {
+      font: inherit; color: var(--fg); background: transparent; box-sizing: border-box; width: 100%;
+      border: 1px solid var(--muted); border-radius: 4px; padding: 6px 8px;
     }
+    #to-eat input { margin-bottom: 6px; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
     button { font: inherit; padding: 6px 14px; border-radius: 4px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
-    button.secondary { background: transparent; color: var(--accent); }
-    label { color: var(--muted); }
     #put-result { color: var(--muted); }
     #put-result.err { color: var(--err); }
   </style>
 </head>
 <body>
 <main>
-  <h1>reTerminal E1002 preview</h1>
-  <p class="sub">Renders <code>GET /screen</code> through the same <code>render</code> crate the device runs, with the panel's six-colour palette.</p>
+  <h1>reTerminal E1002</h1>
+  <p class="sub">Set the values shown on the screen. The layout itself is edited on the <a href="/layout">layout page</a>.</p>
 
   <canvas id="panel" width="800" height="480" aria-label="Panel preview"></canvas>
   <div id="status">Loading…</div>
 
-  <div class="row">
-    <button id="put" title="PUT the JSON below to /screen">Update screen</button>
-    <button id="reload" class="secondary" title="Reload the JSON from GET /screen">Reload from server</button>
-    <label><input type="checkbox" id="flash" checked> simulate panel flash</label>
-    <span id="put-result"></span>
-  </div>
-  <textarea id="json" spellcheck="false" aria-label="Screen spec JSON"></textarea>
+  <form id="values">
+    <label class="field"><span>Today</span><input type="text" name="todo" maxlength="24" autocomplete="off"></label>
+    <div class="cols">
+      <section>
+        <h2>Meals</h2>
+        <label class="field"><span>Breakfast</span><input type="text" name="meal" maxlength="20" autocomplete="off"></label>
+        <label class="field"><span>Lunch</span><input type="text" name="meal" maxlength="20" autocomplete="off"></label>
+        <label class="field"><span>Dinner</span><input type="text" name="meal" maxlength="20" autocomplete="off"></label>
+      </section>
+      <section>
+        <h2>To Eat</h2>
+        <div id="to-eat"></div>
+      </section>
+    </div>
+    <div class="row">
+      <button type="submit">Update screen</button>
+      <span id="put-result"></span>
+    </div>
+  </form>
 </main>
 <script src="preview.js"></script>
+<script src="values.js"></script>
 </body>
 </html>

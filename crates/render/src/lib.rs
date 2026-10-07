@@ -22,7 +22,7 @@ mod frame;
 pub mod palette;
 
 pub use color::Spectra6;
-pub use compose::{render, render_error, ErrorKind};
+pub use compose::{render, render_with_alert};
 pub use frame::{Frame, FrameMut, FRAME_BYTES, HEIGHT, STRIDE, WIDTH};
 
 pub use embedded_graphics;

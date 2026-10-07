@@ -14,9 +14,10 @@
 //! 3. JS wraps the RGBA bytes at [`wp_rgba_ptr`] in an `ImageData` and
 //!    draws it on an 800×480 canvas.
 //!
-//! On a parse error the same error screen the device shows is rendered
-//! instead, the status code says why, and [`wp_error_ptr`] carries the
-//! message.
+//! On a parse error a blank screen with the red status bar carrying the
+//! message is rendered instead — what the device shows when it has no
+//! usable screen — the status code says why, and [`wp_error_ptr`] carries
+//! the message.
 //!
 //! Everything lives in static buffers (the module has no allocator and no
 //! `std` on wasm). The host build of this crate (`rlib`) exists so the ABI
@@ -29,14 +30,15 @@ use core::cell::UnsafeCell;
 use core::fmt::Write;
 
 use render::palette::expand_rgba;
-use render::{ErrorKind, Frame, FRAME_BYTES, HEIGHT, WIDTH};
-use screen_spec::{ParseError, MAX_JSON_BYTES, MAX_TEXT};
+use render::{Frame, FRAME_BYTES, HEIGHT, WIDTH};
+use screen_spec::{ParseError, ScreenSpec, MAX_JSON_BYTES, MAX_TEXT};
 
 /// `wp_render` succeeded.
 pub const STATUS_OK: i32 = 0;
-/// The document was malformed; an error screen was rendered.
+/// The document was malformed; the error was rendered in the status bar.
 pub const STATUS_INVALID_SPEC: i32 = 1;
-/// The document's `version` is unsupported; an error screen was rendered.
+/// The document's `version` is unsupported; the error was rendered in the
+/// status bar.
 pub const STATUS_UNSUPPORTED_VERSION: i32 = 2;
 /// `len` exceeded the spec buffer; nothing was rendered.
 pub const STATUS_TOO_LARGE: i32 = -1;
@@ -163,8 +165,8 @@ pub extern "C" fn wp_error_len() -> usize {
 /// Parses the first `len` bytes of the spec buffer and renders them.
 ///
 /// Returns [`STATUS_OK`], or one of the other `STATUS_*` codes. For the
-/// two "error screen" statuses the RGBA output is still valid and shows
-/// the same notice the device would display.
+/// two error statuses the RGBA output is still valid: a blank screen with
+/// the message in the red status bar.
 #[no_mangle]
 pub extern "C" fn wp_render(len: usize) -> i32 {
     let err = ERR.get();
@@ -183,14 +185,10 @@ pub extern "C" fn wp_render(len: usize) -> i32 {
         }
         Err(e) => {
             let _ = write!(err, "{e}");
-            let kind = match e {
-                ParseError::UnsupportedVersion(_) => ErrorKind::UnsupportedVersion,
-                ParseError::Json(_) => ErrorKind::InvalidSpec,
-            };
-            let _ = render::render_error(kind, err.as_str(), frame);
-            match kind {
-                ErrorKind::UnsupportedVersion => STATUS_UNSUPPORTED_VERSION,
-                _ => STATUS_INVALID_SPEC,
+            let _ = render::render_with_alert(&ScreenSpec::empty(), Some(err.as_str()), frame);
+            match e {
+                ParseError::UnsupportedVersion(_) => STATUS_UNSUPPORTED_VERSION,
+                ParseError::Json(_) => STATUS_INVALID_SPEC,
             }
         }
     };

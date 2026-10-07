@@ -4,6 +4,12 @@
 //! go back to deep sleep until the next timer tick or a press of the
 //! Refresh button.
 //!
+//! What only the device knows — battery low, or no usable screen from the
+//! server — is shown by turning the document's status bar red (see
+//! `render::render_with_alert`), repainting the last good document from
+//! flash when the fetch failed. The panel is refreshed only when the
+//! document or the bar state changes.
+//!
 //! Only compiles for `xtensa-esp32s3-none-elf` with the esp-rs toolchain;
 //! see README.md in this directory. CI links it on every push.
 #![no_std]
@@ -21,6 +27,7 @@ mod display;
 mod net;
 mod persist;
 mod power;
+mod store;
 
 use core::fmt::Write;
 
@@ -34,12 +41,13 @@ use esp_hal::psram::{PsramConfig, PsramMode};
 use esp_hal::system::Cpu;
 use esp_hal::timer::timg::TimerGroup;
 use log::{error, info, warn};
-use render::{ErrorKind, FRAME_BYTES, FrameMut};
-use screen_spec::{MAX_JSON_BYTES, MAX_TEXT, ParseError};
+use render::{FRAME_BYTES, FrameMut};
+use screen_spec::{MAX_JSON_BYTES, MAX_TEXT, ParseError, ScreenSpec};
 use static_cell::ConstStaticCell;
 
 use crate::display::{Display, DisplayPins};
 use crate::net::NetError;
+use crate::store::Store;
 
 // App descriptor required by the ESP-IDF 2nd-stage bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -51,21 +59,61 @@ static BODY: ConstStaticCell<[u8; MAX_JSON_BYTES + 2048]> =
 /// Scratch for decoding JSON string escapes.
 static UNESCAPE: ConstStaticCell<[u8; MAX_TEXT]> = ConstStaticCell::new([0; MAX_TEXT]);
 
-/// One wake cycle's outcome.
-enum Outcome {
-    /// Content unchanged since the last flush; nothing drawn.
-    Unchanged,
-    /// A new document was rendered and flushed.
-    Shown,
-    /// Something failed; the previous image was left on the panel.
-    Failed(Failure),
-}
-
 #[derive(Debug, Clone, Copy)]
 enum Failure {
     Net(NetError),
     Spec(ParseError),
     Display(display::DisplayError),
+}
+
+/// What the status bar shows. Stored in RTC memory as [`Bar::code`] so a
+/// change (and only a change) costs a panel refresh.
+#[derive(Debug, Clone, Copy)]
+enum Bar {
+    /// As the server sent it.
+    Normal,
+    /// Red, "battery low".
+    BatteryLow,
+    /// Red, with the failure. Takes precedence over the battery warning.
+    Error(Failure),
+}
+
+impl Bar {
+    fn code(self) -> u32 {
+        match self {
+            Bar::Normal => 0,
+            Bar::BatteryLow => 1,
+            // The message is not part of the code: a WiFi error turning
+            // into an HTTP error is not worth a 20 s refresh.
+            Bar::Error(_) => 2,
+        }
+    }
+
+    fn message(self) -> Option<heapless::String<64>> {
+        let mut msg = heapless::String::new();
+        let _ = match self {
+            Bar::Normal => return None,
+            Bar::BatteryLow => msg.write_str("battery low"),
+            Bar::Error(Failure::Net(e)) => match e {
+                NetError::Radio => msg.write_str("WiFi radio failed"),
+                NetError::WifiConnect => msg.write_str("no WiFi connection"),
+                NetError::Dhcp => msg.write_str("WiFi: no IP address"),
+                NetError::Http => msg.write_str("could not reach server"),
+                NetError::Status(code) => write!(msg, "server error {code}"),
+                NetError::BodyTooLarge => msg.write_str("screen too large"),
+            },
+            Bar::Error(Failure::Spec(ParseError::UnsupportedVersion(v))) => write!(
+                msg,
+                "server sent spec v{v}, firmware supports v{}",
+                screen_spec::VERSION
+            ),
+            Bar::Error(Failure::Spec(ParseError::Json(_))) => {
+                msg.write_str("invalid screen from server")
+            }
+            Bar::Error(Failure::Display(e)) => write!(msg, "display: {e:?}"),
+        };
+        Some(msg)
+    }
 }
 
 #[esp_rtos::main]
@@ -97,6 +145,15 @@ async fn main(spawner: Spawner) {
     let mut led = Output::new(peripherals.GPIO6, Level::Low, OutputConfig::default());
     let _sd_cs = Output::new(peripherals.GPIO14, Level::High, OutputConfig::default());
 
+    // Before the radio starts: its current draw sags the battery voltage.
+    let percent = power::battery_percent(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
+    let battery_low = if persist::battery_low() {
+        percent < config::BATTERY_OK_PERCENT
+    } else {
+        percent < config::BATTERY_LOW_PERCENT
+    };
+    persist::set_battery_low(battery_low);
+
     // The scheduler must run before the radio is initialised.
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
@@ -123,23 +180,68 @@ async fn main(spawner: Spawner) {
             None
         }
     };
+    let mut store = Store::open(peripherals.FLASH);
 
-    let outcome = cycle(&spawner, peripherals.WIFI, display.as_mut(), &mut frame_buf).await;
+    let body = BODY.take();
+    let unescape = UNESCAPE.take();
+    let fetched = fetch(&spawner, peripherals.WIFI, body).await;
 
-    let failures = match outcome {
-        Outcome::Unchanged => {
-            info!("cycle: unchanged");
-            0
+    let result = match fetched {
+        Ok(len) => {
+            let json = &body[..len];
+            let hash = screen_spec::content_hash(json);
+            let bar = if battery_low {
+                Bar::BatteryLow
+            } else {
+                Bar::Normal
+            };
+            if hash == persist::last_hash() && bar.code() == persist::last_bar() {
+                info!("cycle: unchanged");
+                Ok(())
+            } else {
+                match screen_spec::parse(json, unescape) {
+                    Ok(spec) => {
+                        if let Some(store) = store.as_mut() {
+                            store.save(json, hash);
+                        }
+                        show(display.as_mut(), &mut frame_buf, &spec, hash, bar)
+                            .map(|()| info!("cycle: shown"))
+                            .map_err(Failure::Display)
+                    }
+                    Err(e) => {
+                        warn!("spec: {e}");
+                        Err(Failure::Spec(e))
+                    }
+                }
+            }
         }
-        Outcome::Shown => {
-            info!("cycle: shown");
-            0
-        }
-        Outcome::Failed(f) => {
+        Err(e) => Err(Failure::Net(e)),
+    };
+
+    let failures = match result {
+        Ok(()) => 0,
+        Err(f) => {
             let n = persist::failures() + 1;
             warn!("cycle: failed ({f:?}); consecutive failures {n}");
-            if n == config::FAILURES_BEFORE_ERROR_SCREEN {
-                show_error_screen(display.as_mut(), &mut frame_buf, f);
+            // The panel still shows whatever it showed; only a change in the
+            // bar (the error after enough failures, or the battery warning
+            // appearing meanwhile) repaints the last good screen.
+            let bar = if n >= config::FAILURES_BEFORE_ERROR_BAR {
+                Bar::Error(f)
+            } else if battery_low {
+                Bar::BatteryLow
+            } else {
+                Bar::Normal
+            };
+            if bar.code() != persist::last_bar() {
+                repaint_saved(
+                    display.as_mut(),
+                    store.as_mut(),
+                    &mut frame_buf,
+                    body,
+                    unescape,
+                    bar,
+                );
             }
             n
         }
@@ -151,7 +253,7 @@ async fn main(spawner: Spawner) {
     }
     led.set_high();
 
-    let secs = if failures > 0 && failures < config::FAILURES_BEFORE_ERROR_SCREEN {
+    let secs = if failures > 0 && failures < config::FAILURES_BEFORE_ERROR_BAR {
         config::RETRY_INTERVAL_SECS
     } else {
         config::POLL_INTERVAL_SECS
@@ -160,91 +262,63 @@ async fn main(spawner: Spawner) {
     power::deep_sleep(peripherals.LPWR, peripherals.GPIO3, secs)
 }
 
-async fn cycle(
+/// Joins WiFi, fetches the document into the start of `body` and returns its
+/// length. The radio is off again by the time this returns: rendering and
+/// the 20 s panel refresh do not need it.
+async fn fetch(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
-    display: Option<&mut Display>,
-    frame_buf: &mut [u8],
-) -> Outcome {
-    let conn = match net::connect(spawner, wifi).await {
-        Ok(c) => c,
-        Err(e) => return Outcome::Failed(Failure::Net(e)),
-    };
-
-    let body = BODY.take();
+    body: &mut [u8],
+) -> Result<usize, NetError> {
+    let conn = net::connect(spawner, wifi).await?;
     let fetched = net::fetch_screen(conn.stack, body).await;
-    // Radio off as early as possible: rendering and the 20 s panel refresh
-    // do not need it.
     net::disconnect(conn).await;
-
-    let len = match fetched {
-        Ok(len) => len,
-        Err(e) => return Outcome::Failed(Failure::Net(e)),
-    };
-    let json = &body[..len];
-
-    let hash = screen_spec::content_hash(json);
-    if hash == persist::last_hash() {
-        return Outcome::Unchanged;
-    }
-
-    let spec = match screen_spec::parse(json, UNESCAPE.take()) {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("spec: {e}");
-            return Outcome::Failed(Failure::Spec(e));
-        }
-    };
-
-    let Some(display) = display else {
-        return Outcome::Failed(Failure::Display(display::DisplayError::Spi));
-    };
-    let mut frame = FrameMut::new(frame_buf).expect("frame buffer is FRAME_BYTES long");
-    let _ = render::render(&spec, &mut frame);
-    match display.show(frame.as_bytes()) {
-        Ok(()) => {
-            persist::set_last_hash(hash);
-            Outcome::Shown
-        }
-        Err(e) => Outcome::Failed(Failure::Display(e)),
-    }
+    fetched
 }
 
-/// Renders the shared error notice so a persistently broken setup is
-/// visible on the panel, not just on the serial console.
-fn show_error_screen(display: Option<&mut Display>, frame_buf: &mut [u8], failure: Failure) {
-    let Some(display) = display else {
-        return;
-    };
-    let mut detail: heapless::String<160> = heapless::String::new();
-    let kind = match failure {
-        Failure::Net(e) => {
-            let _ = write!(detail, "{e:?} — server {}", config::SCREEN_URL);
-            ErrorKind::FetchFailed
-        }
-        Failure::Spec(ParseError::UnsupportedVersion(v)) => {
-            let _ = write!(
-                detail,
-                "server sent version {v}; this firmware understands version {}",
-                screen_spec::VERSION
-            );
-            ErrorKind::UnsupportedVersion
-        }
-        Failure::Spec(e) => {
-            let _ = write!(detail, "{e}");
-            ErrorKind::InvalidSpec
-        }
-        Failure::Display(e) => {
-            let _ = write!(detail, "display: {e:?}");
-            ErrorKind::FetchFailed
-        }
-    };
+/// Renders `spec` with `bar` and flushes it, recording what the panel now
+/// shows so an identical next wake can skip the refresh.
+fn show(
+    display: Option<&mut Display>,
+    frame_buf: &mut [u8],
+    spec: &ScreenSpec,
+    hash: u64,
+    bar: Bar,
+) -> Result<(), display::DisplayError> {
+    let display = display.ok_or(display::DisplayError::Spi)?;
     let mut frame = FrameMut::new(frame_buf).expect("frame buffer is FRAME_BYTES long");
-    let _ = render::render_error(kind, &detail, &mut frame);
-    if let Err(e) = display.show(frame.as_bytes()) {
-        error!("could not show error screen: {e:?}");
-    } else {
-        // The error screen replaced the last good image.
-        persist::set_last_hash(0);
+    let message = bar.message();
+    let _ = render::render_with_alert(spec, message.as_deref(), &mut frame);
+    display.show(frame.as_bytes())?;
+    persist::set_last_hash(hash);
+    persist::set_last_bar(bar.code());
+    Ok(())
+}
+
+/// Repaints the last good document from flash with `bar`; with nothing
+/// saved (or no flash partition), a blank screen with just the bar.
+fn repaint_saved(
+    display: Option<&mut Display>,
+    store: Option<&mut Store>,
+    frame_buf: &mut [u8],
+    body: &mut [u8],
+    unescape: &mut [u8],
+    bar: Bar,
+) {
+    // One `ScreenSpec` (~9 KB) on the stack, not two.
+    let mut spec = ScreenSpec::empty();
+    let mut hash = 0;
+    if let Some((len, saved_hash)) = store.and_then(|s| s.load(body)) {
+        match screen_spec::parse(&body[..len], unescape) {
+            Ok(saved) => {
+                spec = saved;
+                hash = saved_hash;
+            }
+            Err(e) => warn!("store: saved screen does not parse: {e}"),
+        }
+    }
+    info!("cycle: repainting with status bar {bar:?}");
+    if let Err(e) = show(display, frame_buf, &spec, hash, bar) {
+        error!("could not repaint: {e:?}");
     }
 }

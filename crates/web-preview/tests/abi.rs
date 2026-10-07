@@ -6,7 +6,7 @@ use render::{Frame, FRAME_BYTES};
 use screen_spec::MAX_JSON_BYTES;
 use web_preview::*;
 
-const KITCHEN: &[u8] = include_bytes!("../../screen-spec/samples/kitchen.json");
+const MEALS: &[u8] = include_bytes!("../../screen-spec/samples/meals.json");
 
 fn load(json: &[u8]) -> i32 {
     assert!(json.len() <= wp_spec_buf_len());
@@ -39,30 +39,33 @@ fn abi_end_to_end() {
     assert_eq!(wp_frame_len(), FRAME_BYTES);
 
     // A good document renders, matches a direct render, and expands to RGBA.
-    assert_eq!(load(KITCHEN), STATUS_OK);
+    assert_eq!(load(MEALS), STATUS_OK);
     assert_eq!(error(), "");
     let mut scratch = [0u8; screen_spec::MAX_TEXT];
-    let spec = screen_spec::parse(KITCHEN, &mut scratch).unwrap();
+    let spec = screen_spec::parse(MEALS, &mut scratch).unwrap();
     let mut direct = Box::new(Frame::new());
     render::render(&spec, &mut *direct).unwrap();
     assert_eq!(frame_bytes(), direct.as_bytes());
     let px = rgba();
     assert_eq!(px.len(), 800 * 480 * 4);
-    // Top-left pixel is the black title banner.
-    assert_eq!(&px[0..4], &[0, 0, 0, 255]);
+    // Top-left pixel is the blue title banner.
+    assert_eq!(&px[0..3], &RGB_BY_CODE[5]);
+    assert_eq!(px[3], 255);
     // Bottom-left pixel is the blue footer.
     let last_row = 479 * 800 * 4;
     assert_eq!(&px[last_row..last_row + 3], &RGB_BY_CODE[5]);
 
-    // Malformed JSON: error status, message, and an error screen (red banner).
+    // Malformed JSON: error status, message, and a blank screen with a red
+    // status bar.
     assert_eq!(load(b"{\"version\":1,\"regions\":[{"), STATUS_INVALID_SPEC);
     assert!(error().contains("invalid screen spec JSON"), "{}", error());
-    assert_eq!(&rgba()[0..3], &RGB_BY_CODE[3], "red banner");
+    assert_eq!(&rgba()[0..3], &RGB_BY_CODE[1], "white screen");
+    assert_eq!(&rgba()[last_row..last_row + 3], &RGB_BY_CODE[3], "red bar");
 
     // Unsupported version: distinct status.
     assert_eq!(load(b"{\"version\":7}"), STATUS_UNSUPPORTED_VERSION);
     assert!(error().contains("unsupported screen spec version 7"));
-    assert_eq!(&rgba()[0..3], &RGB_BY_CODE[3]);
+    assert_eq!(&rgba()[last_row..last_row + 3], &RGB_BY_CODE[3]);
 
     // Too large: rejected up front; the previous image is left in place.
     assert_eq!(wp_render(MAX_JSON_BYTES + 1), STATUS_TOO_LARGE);
