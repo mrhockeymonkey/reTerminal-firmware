@@ -9,7 +9,7 @@ use embassy_time::{Duration, with_timeout};
 use esp_hal::peripherals::WIFI;
 use esp_hal::rng::Rng;
 use esp_radio::wifi::sta::StationConfig;
-use esp_radio::wifi::{Config as WifiConfig, Interface, WifiController};
+use esp_radio::wifi::{Config as WifiConfig, ControllerConfig, Interface, WifiController};
 use log::{info, warn};
 use reqwless::client::HttpClient;
 use reqwless::request::Method;
@@ -18,8 +18,13 @@ use static_cell::{ConstStaticCell, StaticCell};
 use crate::config;
 
 const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const DHCP_TIMEOUT: Duration = Duration::from_secs(10);
+/// The first lease after a cold power-on has been seen to need more than 10 s.
+const DHCP_TIMEOUT: Duration = Duration::from_secs(20);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Station RX queue depth in frames. esp-radio's default of 5 overflowed
+/// ("RX QUEUE FULL") and dropped the DHCP offer; each slot only holds a
+/// pointer to a driver buffer, so a deeper queue costs almost no RAM.
+const RX_QUEUE_SIZE: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetError {
@@ -55,7 +60,8 @@ pub struct Connection {
     pub stack: &'static Stack<'static>,
 }
 
-/// Joins the configured network and waits for a DHCP lease.
+/// Starts the network stack, joins the configured network and waits for a
+/// DHCP lease.
 ///
 /// `esp_rtos::start` must already have been called.
 pub async fn connect(spawner: &Spawner, wifi: WIFI<'static>) -> Result<Connection, NetError> {
@@ -64,11 +70,11 @@ pub async fn connect(spawner: &Spawner, wifi: WIFI<'static>) -> Result<Connectio
     }
 
     // `wifi::new` starts the radio; `set_config` starts station mode.
-    let (mut controller, interfaces) =
-        esp_radio::wifi::new(wifi, Default::default()).map_err(|e| {
-            warn!("wifi init: {e:?}");
-            NetError::Radio
-        })?;
+    let radio_config = ControllerConfig::default().with_rx_queue_size(RX_QUEUE_SIZE);
+    let (mut controller, interfaces) = esp_radio::wifi::new(wifi, radio_config).map_err(|e| {
+        warn!("wifi init: {e:?}");
+        NetError::Radio
+    })?;
     let station = StationConfig::default()
         .with_ssid(config::WIFI_SSID)
         .with_password(alloc::string::String::from(config::WIFI_PASSWORD));
@@ -78,6 +84,20 @@ pub async fn connect(spawner: &Spawner, wifi: WIFI<'static>) -> Result<Connectio
             warn!("wifi config: {e:?}");
             NetError::Radio
         })?;
+
+    // Bring the stack up before associating so the runner is already
+    // draining the RX queue when the link comes up; embassy-net starts DHCP
+    // itself once the driver reports link up.
+    let rng = Rng::new();
+    let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
+    let (stack, runner) = embassy_net::new(
+        interfaces.station,
+        NetConfig::dhcpv4(Default::default()),
+        STACK_RESOURCES.take(),
+        seed,
+    );
+    let stack = STACK.init(stack);
+    spawner.spawn(net_task(runner).expect("net task pool exhausted"));
 
     info!("wifi: connecting to {:?}", config::WIFI_SSID);
     match with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()).await {
@@ -91,17 +111,6 @@ pub async fn connect(spawner: &Spawner, wifi: WIFI<'static>) -> Result<Connectio
             return Err(NetError::WifiConnect);
         }
     }
-
-    let rng = Rng::new();
-    let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
-    let (stack, runner) = embassy_net::new(
-        interfaces.station,
-        NetConfig::dhcpv4(Default::default()),
-        STACK_RESOURCES.take(),
-        seed,
-    );
-    let stack = STACK.init(stack);
-    spawner.spawn(net_task(runner).expect("net task pool exhausted"));
 
     match with_timeout(DHCP_TIMEOUT, stack.wait_config_up()).await {
         Ok(()) => {

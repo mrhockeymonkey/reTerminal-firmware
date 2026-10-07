@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "background": "white",
+  "regions": [
+    {
+      "rect": [0, 0, 800, 90],
+      "text": "Today: {{todo}}",
+      "style": "title",
+      "align": "center",
+      "valign": "middle",
+      "color": "white",
+      "background": "blue"
+    },
+    {
+      "rect": [24, 105, 360, 40],
+      "text": "Meals",
+      "style": "header",
+      "color": "blue"
+    },
+    {
+      "rect": [416, 105, 360, 40],
+      "text": "To Eat",
+      "style": "header",
+      "color": "blue"
+    },
+    {
+      "rect": [24, 155, 360, 28],
+      "text": "Breakfast",
+      "style": "body"
+    },
+    {
+      "rect": [24, 183, 360, 40],
+      "text": "{{meals.0}}",
+      "style": "header"
+    },
+    {
+      "rect": [24, 250, 360, 28],
+      "text": "Lunch",
+      "style": "body"
+    },
+    {
+      "rect": [24, 278, 360, 40],
+      "text": "{{meals.1}}",
+      "style": "header"
+    },
+    {
+      "rect": [24, 345, 360, 28],
+      "text": "Dinner",
+      "style": "body"
+    },
+    {
+      "rect": [24, 373, 360, 40],
+      "text": "{{meals.2}}",
+      "style": "header"
+    },
+    {
+      "rect": [416, 155, 360, 260],
+      "text": "{{to_eat}}",
+      "style": "body"
+    },
+    {
+      "rect": [0, 450, 800, 30],
+      "text": "updated 07:15 via server",
+      "style": "small",
+      "align": "right",
+      "valign": "middle",
+      "color": "white",
+      "background": "blue"
+    }
+  ]
+}

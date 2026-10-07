@@ -62,7 +62,7 @@ download hosts are blocked there); it is excluded from the workspace's
 ## Hardware validation checklist
 
 1. Back up the stock firmware first:
-   `esptool -c esp32s3 -p /dev/ttyUSB0 read-flash 0x0 0x2000000 fw-backup-32MB.bin`.
+   `esptool -c esp32s3 -p /dev/ttyUSB0 -b 921600 read-flash 0x0 0x2000000 fw-backup-32MB.bin`.
 2. Run `server` on the laptop (`cargo run -p server -- --bind 0.0.0.0:8080`),
    flash with `SCREEN_URL` pointing at it, and watch the monitor for: PSRAM
    init, `wifi: connected`, `dhcp: <ip>`, `http: N byte body`, `panel: refresh`,
@@ -72,3 +72,18 @@ download hosts are blocked there); it is excluded from the workspace's
 5. Stop the server: after the third failed cycle the red error screen
    appears; start it again and normal content returns.
 6. Measure sleep current and awake time to tune `POLL_INTERVAL_SECS`.
+
+
+## Issues
+
+```bash
+espflash board-info
+[2026-10-06T19:52:21Z INFO ] Serial port: '/dev/ttyUSB0'
+[2026-10-06T19:52:21Z INFO ] Connecting...
+Error:   × Failed to open serial port /dev/ttyUSB0
+  ├─▶ Error while connecting to device
+  ╰─▶ Permission denied
+
+sudo usermod -aG dialout $USER
+# reboot or logoff/on
+```

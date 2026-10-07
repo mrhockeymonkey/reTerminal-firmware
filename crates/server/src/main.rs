@@ -1,6 +1,7 @@
-//! Native binary (design brief §9): holds the current screen spec, serves
-//! it as JSON to the device (`GET /screen`) and to the browser preview, and
-//! accepts updates (`PUT /screen`). Runs on the developer's machine — the
+//! Native binary (design brief §9): holds a screen-spec template plus the
+//! values filled into it, serves the filled-in spec as JSON to the device
+//! (`GET /screen`) and to the browser preview, and accepts updates to the
+//! template (`PUT /screen`) and values (`PUT /values`). Runs on the developer's machine — the
 //! local server the device's firmware polls over WiFi (design brief §10).
 //!
 //! ```text
@@ -13,6 +14,7 @@
 
 mod routes;
 mod state;
+mod template;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -32,8 +34,9 @@ struct Args {
     #[arg(long, default_value = "127.0.0.1:8080")]
     bind: SocketAddr,
 
-    /// Where the current screen spec is persisted (survives restarts).
-    /// Pass an empty string to keep it in memory only.
+    /// Where the screen template is persisted (survives restarts); the
+    /// values filled into it live in `values.json` in the same directory.
+    /// Pass an empty string to keep both in memory only.
     #[arg(long, default_value = "screen.json")]
     state_file: String,
 
