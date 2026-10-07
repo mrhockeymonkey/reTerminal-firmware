@@ -202,7 +202,9 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    const KITCHEN: &str = include_str!("../../screen-spec/samples/kitchen.json");
+    /// A placeholder-free document, so `GET /screen` serves it verbatim.
+    const PLAIN: &str =
+        r#"{"version":1,"regions":[{"rect":[0,0,800,90],"text":"Plain","background":"blue"}]}"#;
     const MINIMAL: &str = include_str!("../../screen-spec/samples/minimal.json");
 
     fn app(state: AppState) -> Router {
@@ -228,16 +230,16 @@ mod tests {
 
     #[tokio::test]
     async fn get_screen_serves_current_with_etag() {
-        let app = app(AppState::in_memory(KITCHEN));
+        let app = app(AppState::in_memory(PLAIN));
         let (status, headers, body) = send(&app, get("/screen")).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, KITCHEN);
+        assert_eq!(body, PLAIN);
         assert_eq!(headers[header::CONTENT_TYPE], "application/json");
         assert_eq!(headers[header::CACHE_CONTROL], "no-store");
         let etag = headers[header::ETAG].to_str().unwrap().to_owned();
         assert_eq!(
             etag,
-            format!("\"{:016x}\"", screen_spec::content_hash(KITCHEN.as_bytes()))
+            format!("\"{:016x}\"", screen_spec::content_hash(PLAIN.as_bytes()))
         );
 
         let req = Request::get("/screen")
@@ -258,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_replaces_document_and_rejects_bad_ones() {
-        let app = app(AppState::in_memory(KITCHEN));
+        let app = app(AppState::in_memory(PLAIN));
 
         let (status, headers, _) = send(&app, put(MINIMAL)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -278,18 +280,18 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         // POST is an alias.
-        let req = Request::post("/screen").body(Body::from(KITCHEN)).unwrap();
+        let req = Request::post("/screen").body(Body::from(PLAIN)).unwrap();
         let (status, _, _) = send(&app, req).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         // Rejected documents leave the current one untouched.
         let (_, _, body) = send(&app, get("/screen")).await;
-        assert_eq!(body, KITCHEN);
+        assert_eq!(body, PLAIN);
     }
 
     #[tokio::test]
     async fn oversized_put_is_refused() {
-        let app = app(AppState::in_memory(KITCHEN));
+        let app = app(AppState::in_memory(PLAIN));
         let padding = " ".repeat(MAX_JSON_BYTES);
         let big = format!("{{\"version\":1{padding}}}");
         let (status, _, _) = send(&app, put(big)).await;
@@ -303,9 +305,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("nested").join("screen.json");
 
-        // First start: no file, default sample.
+        // First start: no file, default template.
         let state = AppState::load(Some(path.clone())).unwrap();
-        assert_eq!(state.current().json, crate::state::DEFAULT_SPEC);
+        assert_eq!(state.template(), crate::state::DEFAULT_SPEC);
         let app = router(Arc::new(state), AssetSource::Embedded);
         let (status, _, _) = send(&app, put(MINIMAL)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -322,7 +324,7 @@ mod tests {
         // A corrupt file is ignored rather than fatal.
         std::fs::write(&path, "not json").unwrap();
         let state = AppState::load(Some(path.clone())).unwrap();
-        assert_eq!(state.current().json, crate::state::DEFAULT_SPEC);
+        assert_eq!(state.template(), crate::state::DEFAULT_SPEC);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -339,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn template_is_filled_with_values() {
-        let app = app(AppState::in_memory(KITCHEN));
+        let app = app(AppState::in_memory(PLAIN));
         let (status, _, _) = send(&app, put(TEMPLATE)).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         let (_, headers, before) = send(&app, get("/screen")).await;
@@ -421,7 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn preview_assets_are_served() {
-        let app = app(AppState::in_memory(KITCHEN));
+        let app = app(AppState::in_memory(PLAIN));
         let (status, headers, body) = send(&app, get("/")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(headers[header::CONTENT_TYPE]

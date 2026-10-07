@@ -10,8 +10,9 @@ use screen_spec::{content_hash, ParseError, MAX_JSON_BYTES, MAX_TEXT};
 
 use crate::template::{self, TemplateError, Values};
 
-/// Served when there is no state file yet.
-pub const DEFAULT_SPEC: &str = include_str!("../../screen-spec/samples/kitchen.json");
+/// The template used when there is no state file yet: the meal-planner
+/// layout, filled with whatever values are set.
+pub const DEFAULT_SPEC: &str = include_str!("../../screen-spec/samples/meals.json");
 
 /// Name of the values file, kept in the same directory as the state file.
 pub const VALUES_FILE: &str = "values.json";

@@ -15,6 +15,10 @@
 static mut LAST_HASH: u64 = 0;
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
 static mut FAILURES: u32 = 0;
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut LAST_BAR: u32 = 0;
+#[esp_hal::ram(unstable(rtc_fast, persistent))]
+static mut BATTERY_LOW: u32 = 0;
 
 /// FNV-1a hash of the last document successfully rendered to the panel
 /// (0 = none since power-on).
@@ -37,4 +41,27 @@ pub fn failures() -> u32 {
 pub fn set_failures(n: u32) {
     // SAFETY: as above.
     unsafe { core::ptr::write_volatile(&raw mut FAILURES, n) }
+}
+
+/// What the status bar on the panel currently shows: a `Bar` code
+/// (0 = normal after a power-on reset).
+pub fn last_bar() -> u32 {
+    // SAFETY: as above.
+    unsafe { core::ptr::read_volatile(&raw const LAST_BAR) }
+}
+
+pub fn set_last_bar(bar: u32) {
+    // SAFETY: as above.
+    unsafe { core::ptr::write_volatile(&raw mut LAST_BAR, bar) }
+}
+
+/// Whether the battery warning is latched (see `config::BATTERY_OK_PERCENT`).
+pub fn battery_low() -> bool {
+    // SAFETY: as above.
+    unsafe { core::ptr::read_volatile(&raw const BATTERY_LOW) != 0 }
+}
+
+pub fn set_battery_low(low: bool) {
+    // SAFETY: as above.
+    unsafe { core::ptr::write_volatile(&raw mut BATTERY_LOW, u32::from(low)) }
 }

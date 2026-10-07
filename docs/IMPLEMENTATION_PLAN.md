@@ -35,13 +35,13 @@ Environment constraints that shape the plan:
 | Word wrap / alignment | `embedded-text` 0.7 `TextBox` with `U8g2TextStyle` | Verified in source: `U8g2TextStyle<C>` implements both `TextRenderer` and `CharacterStyle`, which is exactly `TextBox::new`'s bound; gives wrapping + `HorizontalAlignment`/`VerticalAlignment`. |
 | `embedded-layout`, `embedded-canvas` | Not used in v1 | Regions carry absolute rects; nothing to lay out. Can be added later without schema change. |
 | Screen-spec parsing | `serde` (derive, no_std) + `heapless` 0.9 strings; device parses with `serde_json_core::from_slice_escaped`; server with `serde_json` | Escaped strings (`"\n"`) only reach `&str` fields as *borrowed* in serde-json-core, which fails after unescaping; `heapless::String<N>` fields work on both sides. |
-| Schema versioning | `version` must be `1`; otherwise render an "unsupported spec version" error screen. Unknown fields ignored (serde default). | Forward-compatible for the post-v1 bitmap region. Test pins the "unknown field ignored" behaviour under serde-json-core. |
+| Schema versioning | `version` must be `1`; otherwise keep the last good screen and, after 3 failures, show the error in the red status bar. Unknown fields ignored (serde default). | Forward-compatible for the post-v1 bitmap region. Test pins the "unknown field ignored" behaviour under serde-json-core. |
 | web-preview ⇄ JS glue | **Plain `extern "C"` exports + ~80 lines of hand-written JS**, no `wasm-bindgen`/`web-sys`. Built with `cargo build -p web-preview --target wasm32-unknown-unknown --release`. | Removes the `wasm-bindgen-cli` toolchain + exact-version lockstep; the ABI is five functions over two static buffers. (Deviation from brief §7's "via wasm-bindgen" — the brief permits adaptation.) |
 | wasm assets into `server` | `rust-embed` 8 over `crates/server/assets/` (`index.html`, `preview.js` checked in; `web_preview.wasm` produced by `scripts/build-web-preview.sh`, git-ignored). Debug builds read the folder from disk; release embeds → single binary. | Brief §9 option 2, without a fragile `build.rs` that shells out to cargo. |
 | `server` persistence | Yes: `--state-file <path>` (default `./screen.json`); written atomically on every accepted `PUT`, loaded at start, falls back to a built-in sample spec. | Cheap; survives laptop restarts. |
 | `PUT /screen` access control | None in v1; bind `127.0.0.1` by default, `--bind 0.0.0.0:8080` to expose on the LAN. | LAN-only dev tool; documented in README. |
 | WiFi credentials + server address | Build-time env: `WIFI_SSID`, `WIFI_PASSWORD`, `SCREEN_URL` (e.g. `http://192.168.1.20:8080/screen`), optional `POLL_INTERVAL_SECS` (default 900). Read via `option_env!` with placeholder defaults so CI compiles without secrets. | Brief §14 allows env-baking for dev; a USB-serial config tool is a later milestone. |
-| Poll interval + failure policy | Timer wake every 15 min + Refresh button (GPIO3) wake. On fetch/parse failure keep the last image (no flush), retry after 2 min; after 3 consecutive failures render one error screen, then return to the normal interval. | Avoids a 20 s flash on every transient WiFi failure. |
+| Poll interval + failure policy | Timer wake every 15 min + Refresh button (GPIO3) wake. On fetch/parse failure keep the last image (no flush), retry after 2 min; after 3 consecutive failures turn the status bar (`"status": true` region) red with the error over the last good content (saved in flash), then return to the normal interval. Battery < 10% turns it red with "battery low". | Avoids a 20 s flash on every transient WiFi failure. |
 | Skip-unchanged | Device stores a 64-bit FNV-1a hash of the last successfully rendered body in RTC memory; identical body ⇒ no render, no flush. | The panel refresh is a multi-second full flash; most 15-minute polls will see unchanged content. |
 | Frame memory | `render::Frame` = 800×480×4 bpp = 192,000 bytes. On device allocated once in **octal PSRAM** (8 MB on S3R8) via `esp-alloc`'s external-memory capability; static in wasm; boxed in host tests. | Internal SRAM must also hold esp-radio (~100 KB heap) + esp-rtos stacks + net buffers. Blocking SPI writes from PSRAM are fine (no DMA in v1). |
 | `panel-backend` build target | Written purely against `embedded-hal` 1.0 traits + `epdsi` ⇒ **host-buildable and unit-testable**; move it into `default-members`. Only `firmware` stays Xtensa-only. | Lets CI/tests cover the SPI command stream with `embedded-hal-mock`. Update CLAUDE.md and the crate doc comment. |
@@ -96,7 +96,7 @@ selects channel `esp`. The firmware `Cargo.toml` uses edition 2024 /
 | EPD CS / DC / RST / BUSY | 10 / 11 / 12 / 13 | RST active-low; BUSY active-low with pull-up |
 | Buttons Refresh / Left / Right | 3 / 4 / 5 | pull-up, active-low; GPIO3 is an RTC IO ⇒ deep-sleep wake source |
 | Green LED | 6 | active-low; used as "awake" indicator |
-| Battery ADC / enable | 1 / 21 | not used in v1 |
+| Battery ADC / enable | 1 / 21 | ADC1 ch0; drive 21 high while sampling; feeds the "battery low" status bar |
 | SD card CS / PWR / CD | 14 / 16 / 15 | shares SPI2; keep CS high |
 | I2C0 SDA/SCL (SHT4x, PCF8563 RTC) | 19 / 20 | not used in v1 |
 | UART0 TX/RX | 43 / 44 | console (esp-println) |
@@ -111,7 +111,7 @@ selects channel `esp`. The firmware `Cargo.toml` uses edition 2024 /
   "regions": [
     { "rect": [0, 0, 800, 80],   "text": "Kitchen Display", "style": "title",  "align": "center", "valign": "middle", "color": "black", "background": "yellow" },
     { "rect": [20, 100, 760, 360], "text": "Bin day: Thursday\nNext appointment: 14:00", "style": "body", "align": "left" },
-    { "rect": [0, 470, 800, 10], "background": "blue" }
+    { "rect": [0, 450, 800, 30], "text": "updated 07:15", "style": "small", "align": "right", "color": "white", "background": "blue", "status": true }
   ]
 }
 ```
@@ -148,7 +148,7 @@ Files: root `Cargo.toml`, `.gitignore`, `scripts/build-web-preview.sh`, `.github
 
 ## Phase 1 — `screen-spec`
 
-Files: `crates/screen-spec/src/lib.rs`, `crates/screen-spec/tests/parse.rs`, `crates/screen-spec/examples/*.json` (sample specs: `kitchen.json`, `error-demo.json`).
+Files: `crates/screen-spec/src/lib.rs`, `crates/screen-spec/tests/parse.rs`, `crates/screen-spec/examples/*.json` (sample specs: `meals.json`, `minimal.json`).
 
 - Types per the schema above, `#![no_std]`, `serde` derives, `Default`s, `Colour::ALL`.
 - `pub const MAX_REGIONS = 16`, `MAX_TEXT = 512`, `MAX_JSON_BYTES = 16 * 1024` (the device's receive buffer; the server rejects larger `PUT`s with 413).
@@ -171,7 +171,7 @@ Files: `crates/render/src/{lib.rs, color.rs, palette.rs, frame.rs, fonts.rs, com
 Files: `crates/web-preview/src/lib.rs`, `crates/server/assets/{index.html, preview.js}`, `scripts/build-web-preview.sh`.
 
 - `#![cfg_attr(target_arch = "wasm32", no_std)]`, `crate-type = ["cdylib", "rlib"]` (already set). Statics: `SPEC_BUF: [u8; 16 KiB]`, `UNESCAPE_BUF`, `FRAME: render::Frame`, `RGBA: [u8; 800*480*4]`, `ERR_BUF: [u8; 256]`.
-- Exports: `spec_buf_ptr() -> *mut u8`, `spec_buf_len() -> usize`, `render_spec(len: usize) -> i32` (0 = ok; negative codes for parse / version / overflow; on error it renders the same error screen the device would show and still returns the RGBA), `rgba_ptr() -> *const u8`, `width() / height()`, `error_ptr()/error_len()`. Host `rlib` build keeps `cargo check`/clippy green; a `#[panic_handler]` only under `target_arch = "wasm32"`.
+- Exports: `spec_buf_ptr() -> *mut u8`, `spec_buf_len() -> usize`, `render_spec(len: usize) -> i32` (0 = ok; negative codes for parse / version / overflow; on error it renders a blank screen with the error in the red status bar, as the device would, and still returns the RGBA), `rgba_ptr() -> *const u8`, `width() / height()`, `error_ptr()/error_len()`. Host `rlib` build keeps `cargo check`/clippy green; a `#[panic_handler]` only under `target_arch = "wasm32"`.
 - `preview.js`: `WebAssembly.instantiateStreaming(fetch('web_preview.wasm'))`; `refresh()` = `fetch('/screen')` → bytes → copy into `spec_buf` → `render_spec` → `new ImageData(new Uint8ClampedArray(memory.buffer, rgba_ptr, w*h*4), w, h)` → `putImageData`. Poll every 2 s (or `EventSource` later). Nice-to-have flag: 3-frame black/white flash before settling, mimicking the panel.
 - `index.html`: 800×480 canvas scaled to fit, status line (last update, error text), a textarea + "PUT" button that posts the JSON so the whole loop works from the browser.
 - `scripts/build-web-preview.sh`: builds release wasm, copies `target/wasm32-unknown-unknown/release/web_preview.wasm` to `crates/server/assets/`.
@@ -207,7 +207,7 @@ names below were verified against the extracted esp-hal 1.1.2 / esp-radio
 5. `net.rs`: `HttpClient::new(&TcpClient, &DnsSocket)` (embassy-net 0.9.1 implements `embedded-nal-async` 0.9, matching reqwless 0.14), `client.request(Method::GET, SCREEN_URL).await?.send(&mut rx_buf).await?` then `resp.body().read_to_end().await?` — headers and body share one `static RX_BUF: [u8; 16 KiB]`; the server must send `Content-Length` (axum does). 10 s timeout. FNV-1a hash of the body == `LAST_HASH` ⇒ skip to step 8 with `failures = 0`.
 6. `screen_spec::parse` → `render::render` into the PSRAM `Frame`: allocate once with `allocator_api2::vec::Vec::<u8, _>::with_capacity_in(192_000, esp_alloc::ExternalMemory)` + `resize(192_000, 0x11)` and wrap as `render::FrameMut<'_>` (a borrowed-slice view `render` provides alongside the owned `Frame`, so no 192 KB array is ever materialised on the stack; a PSRAM `static` is impossible — esp-hal has no PSRAM linker section).
 7. `display.rs`: `Spi::new(peripherals.SPI2, spi::master::Config::default().with_frequency(Rate::from_mhz(4)))?.with_sck(GPIO7).with_mosi(GPIO9).with_miso(GPIO8)`; `ExclusiveDevice::new(spi, Output::new(GPIO10, Level::High, OutputConfig::default()), Delay::new())?`; DC=GPIO11, RST=GPIO12 outputs; BUSY=`Input::new(GPIO13, InputConfig::default().with_pull(Pull::Up))`; SD-card CS GPIO14 driven high. `Panel::init` → `show` → `sleep` (blocking SPI writes from PSRAM are plain CPU FIFO copies, no DMA, ~0.4 s). On success `FAILURES = 0`, `LAST_HASH = hash`.
-8. Failure policy per the decisions table (`FAILURES += 1`; error screen only when it reaches 3).
+8. Failure policy per the decisions table (`FAILURES += 1`; red error status bar only when it reaches 3).
 9. `power.rs`: `controller.disconnect_async().await` (ignore `NotConnected`), `drop(controller)` (runs `wifi_deinit` and releases the radio clocks); `RtcPinWithResistors::rtcio_pullup(&peripherals.GPIO3, true)` so the button line does not float in sleep; `let timer = TimerWakeupSource::new(core::time::Duration::from_secs(interval))` (note `core::time`, not `esp_hal::time`); `let ext0 = Ext0WakeupSource::new(peripherals.GPIO3, WakeupLevel::Low)` (takes the GPIO singleton, not an `Input`; keep it alive until sleep); **`RtcSleepConfig::deep()` powers RTC memory off**, so use `let mut cfg = RtcSleepConfig::deep(); cfg.set_rtc_fastmem_pd_en(false); Rtc::new(peripherals.LPWR).sleep(&cfg, &[&timer, &ext0]); unreachable!()` instead of `sleep_deep`. `interval` = 120 s while `0 < FAILURES < 3`, else `POLL_INTERVAL_SECS`.
 
 Optional (esp-radio `unstable`): `ControllerConfig::default().with_country_info("GB")` — the default regdomain is `CN`; channels 1–13 work either way, so this is a nicety, not a blocker.
@@ -224,16 +224,16 @@ Optional (esp-radio `unstable`): `ControllerConfig::default().with_country_info(
 
 1. Back up stock firmware (`esptool -c esp32s3 read-flash 0x0 0x2000000 fw-backup-32MB.bin`).
 2. Flash a build with `SCREEN_URL` pointing at the laptop running `server`; watch the serial monitor for: PSRAM detected (8 MB octal), WiFi connected + DHCP address, HTTP 200 with body length, "frame hash unchanged"/"rendering", panel init/refresh timings (expect ~20 s), deep-sleep entry.
-3. Confirm the panel shows the same image as the browser preview for `examples/kitchen.json` (colours, wrap points, alignment).
+3. Confirm the panel shows the same image as the browser preview for `samples/meals.json` (colours, wrap points, alignment).
 4. Press Refresh (GPIO3) during sleep → wake reason `Ext0`, fetch runs. Timer wake after the interval.
-5. Unplug the server → after the 3rd failure the error screen appears once; plug it back → normal content returns.
+5. Unplug the server → after the 3rd failure the status bar turns red with the error over the last good content; plug it back → the bar returns to normal.
 6. Measure sleep current and awake duration for the power budget (brief milestone 7); tune `POLL_INTERVAL_SECS`.
 
 ## Verification (this environment)
 
 - `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (screen-spec, render, panel-backend, server, web-preview host build).
 - `cargo build -p web-preview --target wasm32-unknown-unknown --release` then `scripts/build-web-preview.sh`.
-- Run `cargo run -p server -- --bind 127.0.0.1:8080`, `curl -X PUT --data-binary @crates/screen-spec/examples/kitchen.json localhost:8080/screen`, `curl localhost:8080/screen`, then load `/` in the pre-installed Chromium via Playwright and screenshot the canvas to the scratchpad to eyeball the render.
+- Run `cargo run -p server -- --bind 127.0.0.1:8080`, `curl -X PUT --data-binary @crates/screen-spec/samples/meals.json localhost:8080/screen`, `curl localhost:8080/screen`, then load `/` in the pre-installed Chromium via Playwright and screenshot the canvas to the scratchpad to eyeball the render.
 - Firmware: push and let CI's `firmware` job link `crates/firmware` with the Xtensa toolchain; iterate on CI failures there (expected: the first pushes of Phase 6 may need API-name fixes since only CI can compile it).
 
 ## Risks / watch items

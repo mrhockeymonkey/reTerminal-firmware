@@ -1,0 +1,9 @@
+# ESP-IDF partition table for the reTerminal E1002 (32 MB flash).
+# The default single-app layout plus `screen`, where the firmware keeps the
+# last good screen document (src/store.rs). Passed to espflash by the runner
+# in .cargo/config.toml.
+# Name,   Type, SubType,   Offset,   Size,     Flags
+nvs,      data, nvs,       0x9000,   0x6000,
+phy_init, data, phy,       0xf000,   0x1000,
+factory,  app,  factory,   0x10000,  0x3f0000,
+screen,   data, undefined, 0x400000, 0x8000,

@@ -15,7 +15,7 @@ PUT /screen (curl)  ─►  server (axum, screen.json)  ─►  GET /screen  ─
 ```
 
 Content is a small JSON "screen spec" (text regions with fonts, alignment,
-colours, borders); see `crates/screen-spec/samples/kitchen.json` and the
+colours, borders); see `crates/screen-spec/samples/meals.json` and the
 schema in `crates/screen-spec/src/lib.rs`. Design rationale lives in
 `reTerminal-E1002-firmware-design-brief.md`; the implementation plan and
 decisions in `docs/IMPLEMENTATION_PLAN.md`.
@@ -31,7 +31,7 @@ Open <http://127.0.0.1:8080/> for the preview, then push content:
 
 ```sh
 curl -X PUT -H 'content-type: application/json' \
-     --data-binary @crates/screen-spec/samples/kitchen.json \
+     --data-binary @crates/screen-spec/samples/meals.json \
      http://127.0.0.1:8080/screen
 ```
 

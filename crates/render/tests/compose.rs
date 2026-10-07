@@ -2,11 +2,24 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use render::palette::{expand_rgba, rgb, RGB_BY_CODE};
 use render::{
-    render, render_error, ErrorKind, Frame, FrameMut, Spectra6, FRAME_BYTES, HEIGHT, STRIDE, WIDTH,
+    render, render_with_alert, Frame, FrameMut, Spectra6, FRAME_BYTES, HEIGHT, STRIDE, WIDTH,
 };
 use screen_spec::{Colour, ScreenSpec, MAX_TEXT};
 
-const KITCHEN: &str = include_str!("../../screen-spec/samples/kitchen.json");
+const MEALS: &str = include_str!("../../screen-spec/samples/meals.json");
+/// One of each drawing feature (fills, a border, text colours) at known
+/// positions, for the pixel assertions below.
+const FEATURES: &str = r#"{"version":1,"background":"white","regions":[
+  {"rect":[0,0,800,90],"text":"Kitchen Display","style":"title","align":"center",
+   "valign":"middle","color":"white","background":"black"},
+  {"rect":[24,110,752,60],"text":"Thursday 18 September","style":"header","color":"blue"},
+  {"rect":[24,180,360,250],"text":"Bin day: Thursday\nRecycling: next week\n\nShopping:\n- milk\n- coffee beans\n- bread",
+   "style":"body","border":{"color":"green","width":3}},
+  {"rect":[416,180,360,250],"text":"Next appointment\n14:00 dentist","style":"body",
+   "align":"center","valign":"middle","color":"red","background":"yellow"},
+  {"rect":[0,450,800,30],"text":"updated 07:15 via server","style":"small","align":"right",
+   "valign":"middle","color":"white","background":"blue","status":true}
+]}"#;
 const MINIMAL: &str = include_str!("../../screen-spec/samples/minimal.json");
 
 fn spec(json: &str) -> ScreenSpec {
@@ -128,9 +141,9 @@ fn frame_mut_shares_behaviour_with_frame() {
     {
         let mut view = FrameMut::new(&mut buf).unwrap();
         view.fill(Spectra6::White);
-        render(&spec(KITCHEN), &mut view).unwrap();
+        render(&spec(FEATURES), &mut view).unwrap();
     }
-    render(&spec(KITCHEN), &mut *owned).unwrap();
+    render(&spec(FEATURES), &mut *owned).unwrap();
     assert_eq!(owned.as_bytes(), &buf[..]);
 
     assert!(FrameMut::new(&mut [0u8; 10]).is_none());
@@ -138,8 +151,8 @@ fn frame_mut_shares_behaviour_with_frame() {
 }
 
 #[test]
-fn kitchen_sample_renders_deterministically_and_within_palette() {
-    let s = spec(KITCHEN);
+fn features_render_deterministically_and_within_palette() {
+    let s = spec(FEATURES);
     let mut a = frame();
     render(&s, &mut *a).unwrap();
     let mut b = frame();
@@ -266,21 +279,55 @@ fn off_screen_and_degenerate_regions_are_harmless() {
 }
 
 #[test]
-fn error_screen_renders_and_truncates() {
-    let mut f = frame();
-    let detail = "é".repeat(2000);
-    render_error(ErrorKind::FetchFailed, &detail, &mut *f).unwrap();
-    assert_only_displayable(f.as_bytes());
-    let banner = Rectangle::new(Point::zero(), Size::new(800, 96));
-    assert!(count(&f, banner, Spectra6::Red) > 800 * 96 / 2);
-    assert!(count(&f, banner, Spectra6::White) > 100);
-    let body = Rectangle::new(Point::new(24, 120), Size::new(752, 336));
-    assert!(count(&f, body, Spectra6::Black) > 100);
+fn alert_restyles_the_marked_status_bar() {
+    let meals = spec(MEALS);
+    let bar = Rectangle::new(Point::new(0, 450), Size::new(800, 30));
+    let left = Rectangle::new(Point::new(0, 450), Size::new(400, 30));
+    let right = Rectangle::new(Point::new(400, 450), Size::new(400, 30));
 
-    for kind in [ErrorKind::InvalidSpec, ErrorKind::UnsupportedVersion] {
-        render_error(kind, "", &mut *f).unwrap();
-        assert_only_displayable(f.as_bytes());
-    }
+    let mut f = frame();
+    render(&meals, &mut *f).unwrap();
+    assert!(count(&f, bar, Spectra6::Blue) > 800 * 30 / 2);
+    assert_eq!(count(&f, bar, Spectra6::Red), 0);
+
+    render_with_alert(&meals, Some("battery low"), &mut *f).unwrap();
+    assert_only_displayable(f.as_bytes());
+    assert_eq!(count(&f, bar, Spectra6::Blue), 0);
+    assert!(count(&f, bar, Spectra6::Red) > 800 * 30 / 2);
+    assert!(count(&f, right, Spectra6::White) > 50, "text on the right");
+    assert_eq!(count(&f, left, Spectra6::White), 0, "nothing on the left");
+    // The rest of the screen is untouched.
+    let title = Rectangle::new(Point::zero(), Size::new(800, 90));
+    assert!(count(&f, title, Spectra6::Blue) > 800 * 90 / 2);
+}
+
+#[test]
+fn alert_without_marked_region_adds_a_bottom_bar() {
+    let minimal = spec(MINIMAL);
+    let bar = Rectangle::new(Point::new(0, 450), Size::new(800, 30));
+    let mut f = frame();
+    render_with_alert(&minimal, Some("could not reach server"), &mut *f).unwrap();
+    assert!(count(&f, bar, Spectra6::Red) > 800 * 30 / 2);
+    assert!(count(&f, bar, Spectra6::White) > 50);
+    // Above the bar the spec is drawn as usual.
+    assert_eq!(f.get_pixel(5, 5), Some(Spectra6::White));
+
+    // With no regions at all (what the device draws with no saved screen).
+    render_with_alert(&ScreenSpec::empty(), Some("x"), &mut *f).unwrap();
+    assert!(count(&f, bar, Spectra6::Red) > 800 * 30 / 2);
+}
+
+#[test]
+fn no_alert_matches_render_and_long_alerts_truncate() {
+    let meals = spec(MEALS);
+    let mut a = frame();
+    let mut b = frame();
+    render(&meals, &mut *a).unwrap();
+    render_with_alert(&meals, None, &mut *b).unwrap();
+    assert_eq!(a.as_bytes(), b.as_bytes());
+
+    render_with_alert(&meals, Some(&"é".repeat(2000)), &mut *b).unwrap();
+    assert_only_displayable(b.as_bytes());
 }
 
 #[test]
@@ -303,9 +350,14 @@ fn palette_expansion() {
 #[test]
 #[ignore]
 fn dump_ppm() {
-    for (name, json) in [("kitchen", KITCHEN), ("minimal", MINIMAL)] {
+    for (name, json, alert) in [
+        ("features", FEATURES, None),
+        ("meals", MEALS, None),
+        ("meals-alert", MEALS, Some("battery low")),
+        ("minimal", MINIMAL, None),
+    ] {
         let mut f = frame();
-        render(&spec(json), &mut *f).unwrap();
+        render_with_alert(&spec(json), alert, &mut *f).unwrap();
         let mut rgba = vec![0u8; FRAME_BYTES * 8];
         expand_rgba(f.as_bytes(), &mut rgba);
         let mut ppm = format!("P6\n{WIDTH} {HEIGHT}\n255\n").into_bytes();

@@ -7,7 +7,7 @@
 //! ```text
 //! cargo run -p server -- --bind 0.0.0.0:8080
 //! curl -X PUT -H 'content-type: application/json' \
-//!      --data-binary @crates/screen-spec/samples/kitchen.json \
+//!      --data-binary @crates/screen-spec/samples/meals.json \
 //!      http://127.0.0.1:8080/screen
 //! open http://127.0.0.1:8080/
 //! ```

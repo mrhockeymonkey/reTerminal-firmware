@@ -285,7 +285,7 @@ Resolved during implementation (details and rationale in `docs/IMPLEMENTATION_PL
 - [x] v1 schema: `version`, `background`, up to 16 `regions` with `rect`, `text`, `style` (title/header/body/small), `align`, `valign`, `color`, optional `background` and `border`; documented in `crates/screen-spec/src/lib.rs`.
 - [x] Versioning: `version` must be `1` (otherwise the device/preview show an "unsupported version" screen); unknown fields are ignored so the schema can grow.
 - [x] Provisioning: build-time env vars (`WIFI_SSID`, `WIFI_PASSWORD`, `SCREEN_URL`, `POLL_INTERVAL_SECS`) with placeholder defaults; a USB-serial config tool remains a later milestone.
-- [x] Poll/failure policy: 15 min timer + Refresh button; on failure keep the last image and retry after 2 min; after 3 consecutive failures show the error screen once. Unchanged content (same FNV-1a hash) skips the refresh entirely.
+- [x] Poll/failure policy: 15 min timer + Refresh button; on failure keep the last image and retry after 2 min; after 3 consecutive failures turn the status bar (`"status": true` region) red with the error over the last good content, saved in flash; battery below 10% turns it red with "battery low". Unchanged content (same FNV-1a hash and bar state) skips the refresh entirely.
 - [x] `server` persists to `--state-file` (default `screen.json`), written atomically.
 - [x] No access control on `PUT /screen`; the server binds to `127.0.0.1` unless told otherwise.
 - [x] Assets are embedded with `rust-embed` (debug builds read them from disk; `--assets-dir` overrides at runtime); `scripts/build-web-preview.sh` produces the wasm.

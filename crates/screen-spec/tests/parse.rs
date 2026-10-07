@@ -3,7 +3,7 @@ use screen_spec::{
     MAX_JSON_BYTES, MAX_REGIONS, MAX_TEXT, VERSION,
 };
 
-const KITCHEN: &str = include_str!("../samples/kitchen.json");
+const MEALS: &str = include_str!("../samples/meals.json");
 const MINIMAL: &str = include_str!("../samples/minimal.json");
 
 fn parse_str(s: &str) -> Result<ScreenSpec, ParseError> {
@@ -13,7 +13,7 @@ fn parse_str(s: &str) -> Result<ScreenSpec, ParseError> {
 
 #[test]
 fn samples_parse_with_serde_json_core_and_serde_json_identically() {
-    for sample in [KITCHEN, MINIMAL] {
+    for sample in [MEALS, MINIMAL] {
         let no_std_spec = parse_str(sample).expect("serde-json-core parse");
         let std_spec: ScreenSpec = serde_json::from_str(sample).expect("serde_json parse");
         assert_eq!(no_std_spec, std_spec);
@@ -22,29 +22,39 @@ fn samples_parse_with_serde_json_core_and_serde_json_identically() {
 }
 
 #[test]
-fn kitchen_sample_fields() {
-    let spec = parse_str(KITCHEN).unwrap();
+fn meals_sample_fields() {
+    let spec = parse_str(MEALS).unwrap();
     assert_eq!(spec.version, VERSION);
     assert_eq!(spec.background, Colour::White);
-    assert_eq!(spec.regions.len(), 5);
+    assert_eq!(spec.regions.len(), 11);
 
     let title = &spec.regions[0];
     assert_eq!(title.rect, [0, 0, 800, 90]);
+    assert_eq!(title.text, "Today: {{todo}}", "placeholders pass through");
     assert_eq!(title.style, TextStyle::Title);
     assert_eq!(title.align, HAlign::Center);
     assert_eq!(title.valign, VAlign::Middle);
     assert_eq!(title.color, Colour::White);
-    assert_eq!(title.background, Some(Colour::Black));
+    assert_eq!(title.background, Some(Colour::Blue));
 
-    let list = &spec.regions[2];
+    let status: Vec<_> = spec.regions.iter().map(|r| r.status).collect();
+    assert_eq!(status.iter().filter(|s| **s).count(), 1);
+    assert!(status[10], "the footer is the status bar");
+}
+
+#[test]
+fn explicit_border_width() {
+    let spec = parse_str(
+        r#"{"version":1,"regions":[{"rect":[0,0,1,1],"border":{"color":"green","width":3}}]}"#,
+    )
+    .unwrap();
     assert_eq!(
-        list.border,
+        spec.regions[0].border,
         Some(Border {
             color: Colour::Green,
             width: 3
         })
     );
-    assert!(list.text.contains("Bin day: Thursday\nRecycling"));
 }
 
 #[test]
@@ -59,6 +69,7 @@ fn defaults_apply_when_fields_are_omitted() {
     assert_eq!(r.color, Colour::Black);
     assert_eq!(r.background, None);
     assert_eq!(r.border, None);
+    assert!(!r.status);
     assert_eq!(*r, Region::new([1, 2, 3, 4]));
 
     let spec = parse_str(r#"{"version":1}"#).unwrap();
@@ -133,7 +144,7 @@ fn bounds_are_enforced_without_panicking() {
 
 #[test]
 fn round_trips_through_both_serialisers() {
-    let spec = parse_str(KITCHEN).unwrap();
+    let spec = parse_str(MEALS).unwrap();
 
     let std_json = serde_json::to_string(&spec).unwrap();
     assert_eq!(parse_str(&std_json).unwrap(), spec);
@@ -142,8 +153,11 @@ fn round_trips_through_both_serialisers() {
     let n = screen_spec::to_json(&spec, &mut buf).unwrap();
     let core_json = std::str::from_utf8(&buf[..n]).unwrap();
     assert_eq!(serde_json::from_str::<ScreenSpec>(core_json).unwrap(), spec);
-    // `None` optionals are omitted rather than written as null.
+    // `None` optionals are omitted rather than written as null, and only
+    // the marked status region carries `status`.
     assert!(!core_json.contains("null"));
+    assert_eq!(core_json.matches(r#""status":true"#).count(), 1);
+    assert!(!core_json.contains(r#""status":false"#));
 }
 
 #[test]
@@ -151,12 +165,12 @@ fn content_hash_is_stable_and_sensitive() {
     assert_eq!(content_hash(b""), 0xcbf2_9ce4_8422_2325);
     assert_eq!(content_hash(b"a"), 0xaf63_dc4c_8601_ec8c);
     assert_ne!(
-        content_hash(KITCHEN.as_bytes()),
+        content_hash(MEALS.as_bytes()),
         content_hash(MINIMAL.as_bytes())
     );
     assert_eq!(
-        content_hash(KITCHEN.as_bytes()),
-        content_hash(KITCHEN.as_bytes())
+        content_hash(MEALS.as_bytes()),
+        content_hash(MEALS.as_bytes())
     );
 }
 
