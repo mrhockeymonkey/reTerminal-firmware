@@ -5,6 +5,9 @@
 'use strict';
 
 const MAX_TO_EAT = 8;
+// Roughly one line of the meals layout's body font in a "To Eat" column.
+// The todo and meal limits are `maxlength` attributes in index.html.
+const MAX_TO_EAT_CHARS = 30;
 
 const form = document.getElementById('values');
 const todoEl = form.elements.todo;
@@ -15,6 +18,7 @@ for (let i = 0; i < MAX_TO_EAT; i++) {
   const input = document.createElement('input');
   input.type = 'text';
   input.autocomplete = 'off';
+  input.maxLength = MAX_TO_EAT_CHARS;
   input.setAttribute('aria-label', `To Eat item ${i + 1}`);
   toEatBox.appendChild(input);
   toEatEls.push(input);

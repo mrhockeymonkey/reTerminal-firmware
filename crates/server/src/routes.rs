@@ -421,6 +421,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn load_falls_back_without_panicking() {
+        let dir = std::env::temp_dir().join(format!(
+            "reterminal-server-fallback-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("screen.json");
+        let values_path = dir.join(crate::state::VALUES_FILE);
+        // Fits a bare `{{todo}}` but not "Today: {{todo}}".
+        let long = "x".repeat(screen_spec::MAX_TEXT - 2);
+        std::fs::write(&values_path, format!(r#"{{"todo":"{long}"}}"#)).unwrap();
+
+        // No template: the built-in screen, values kept for later.
+        let state = AppState::load(Some(path.clone())).unwrap();
+        assert_eq!(state.template(), crate::state::DEFAULT_SPEC);
+        assert_eq!(state.values().todo, long);
+
+        // A template the values overflow: the template wins, values drop.
+        std::fs::write(&path, TEMPLATE).unwrap();
+        let state = AppState::load(Some(path.clone())).unwrap();
+        assert_eq!(state.template(), TEMPLATE);
+        assert_eq!(state.values().todo, "");
+
+        // A broken template: the built-in screen.
+        std::fs::write(&path, r#"{"version":1,"x":"{{nope}}"}"#).unwrap();
+        let state = AppState::load(Some(path)).unwrap();
+        assert_eq!(state.template(), crate::state::DEFAULT_SPEC);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn preview_assets_are_served() {
         let app = app(AppState::in_memory(PLAIN));

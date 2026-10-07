@@ -10,9 +10,39 @@ use screen_spec::{content_hash, ParseError, MAX_JSON_BYTES, MAX_TEXT};
 
 use crate::template::{self, TemplateError, Values};
 
-/// The template used when there is no state file yet: the meal-planner
-/// layout, filled with whatever values are set.
-pub const DEFAULT_SPEC: &str = include_str!("../../screen-spec/samples/meals.json");
+/// The template used when there is no usable state file. It has no
+/// placeholders, so it renders whatever the values are and loading can
+/// always fall back to it.
+pub const DEFAULT_SPEC: &str = r#"{
+  "version": 1,
+  "background": "white",
+  "regions": [
+    {
+      "rect": [0, 0, 800, 90],
+      "text": "reTerminal",
+      "style": "title",
+      "align": "center",
+      "valign": "middle",
+      "color": "white",
+      "background": "blue"
+    },
+    {
+      "rect": [24, 120, 752, 300],
+      "text": "No layout set yet.\n\nOpen the server's /layout page to set one.",
+      "style": "body",
+      "align": "center",
+      "valign": "middle"
+    },
+    {
+      "rect": [0, 450, 800, 30],
+      "text": "",
+      "style": "small",
+      "background": "blue",
+      "status": true
+    }
+  ]
+}
+"#;
 
 /// Name of the values file, kept in the same directory as the state file.
 pub const VALUES_FILE: &str = "values.json";
@@ -82,6 +112,12 @@ fn render(template: &str, values: &Values) -> Result<Current, SetError> {
     Ok(Current::new(json))
 }
 
+/// [`DEFAULT_SPEC`] with `values` kept for when a template is set.
+fn default_state(values: Values) -> (String, Values, Current) {
+    let current = render(DEFAULT_SPEC, &values).expect("the built-in screen has no placeholders");
+    (DEFAULT_SPEC.to_owned(), values, current)
+}
+
 struct Inner {
     /// The layout as stored, placeholders and all.
     template: String,
@@ -100,8 +136,9 @@ pub struct AppState {
 
 impl AppState {
     /// Loads the template from `state_file` and the values from a
-    /// `values.json` next to it. A missing or invalid template falls back to
-    /// [`DEFAULT_SPEC`]; missing or invalid values fall back to empty ones.
+    /// `values.json` next to it. Missing or invalid values, or values the
+    /// template cannot hold, fall back to empty ones; a missing or invalid
+    /// template falls back to [`DEFAULT_SPEC`]. Never fails on bad content.
     /// `None` keeps state in memory.
     pub fn load(state_file: Option<PathBuf>) -> io::Result<Self> {
         let values_file = state_file
@@ -120,30 +157,42 @@ impl AppState {
             },
             _ => Values::default(),
         };
-        let template = match &state_file {
-            Some(path) if path.exists() => {
-                let text = std::fs::read_to_string(path)?;
-                match render(&text, &values) {
-                    Ok(_) => {
-                        tracing::info!("loaded screen template from {}", path.display());
-                        text
+        let stored = match &state_file {
+            Some(path) if path.exists() => Some((path, std::fs::read_to_string(path)?)),
+            Some(path) => {
+                tracing::info!("no {} yet; using the built-in screen", path.display());
+                None
+            }
+            None => None,
+        };
+        // The layout is the hand-built part, so when the pair does not render
+        // the values are dropped first; the template only if it is broken on
+        // its own.
+        let (template, values, current) = match stored {
+            Some((path, text)) => match render(&text, &values) {
+                Ok(current) => {
+                    tracing::info!("loaded screen template from {}", path.display());
+                    (text, values, current)
+                }
+                Err(e) => match render(&text, &Values::default()) {
+                    Ok(current) => {
+                        tracing::warn!(
+                            "{VALUES_FILE} does not fit {}: {e}; using empty values",
+                            path.display()
+                        );
+                        (text, Values::default(), current)
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "ignoring {}: {e}; using the built-in sample",
+                            "ignoring {}: {e}; using the built-in screen",
                             path.display()
                         );
-                        DEFAULT_SPEC.to_owned()
+                        default_state(values)
                     }
-                }
-            }
-            Some(path) => {
-                tracing::info!("no {} yet; using the built-in sample", path.display());
-                DEFAULT_SPEC.to_owned()
-            }
-            None => DEFAULT_SPEC.to_owned(),
+                },
+            },
+            None => default_state(values),
         };
-        let current = render(&template, &values).expect("validated above or built-in");
         Ok(AppState {
             inner: RwLock::new(Inner {
                 template,
